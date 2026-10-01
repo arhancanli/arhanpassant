@@ -129,7 +129,7 @@ def main():
     ap.add_argument("--selfplay-threads", type=int, default=4)
     ap.add_argument("--selfplay-nodes", type=int, default=5000)
     ap.add_argument("--min-new", type=int, default=5_000_000, help="new positions needed before the next attempt")
-    ap.add_argument("--epochs", type=int, default=12)
+    ap.add_argument("--samples", type=int, default=1_200_000_000, help="training samples per round (sets the epoch count)")
     ap.add_argument("--once", action="store_true", help="run a single round and exit")
     args = ap.parse_args()
 
@@ -159,8 +159,10 @@ def main():
         candidate = os.path.join(args.data, "nets", f"cand-{stamp}-h{hidden}.nnue")
         os.makedirs(os.path.dirname(candidate), exist_ok=True)
         log(f"round {state['attempts']}: training h{hidden} on {n:,} positions -> {candidate}")
+        # A fixed sample budget keeps each round's training time steady as data grows.
+        epochs = max(2, min(15, args.samples // max(n, 1)))
         rc = run([sys.executable, os.path.join(ROOT, "trainer", "train.py"), "--data", os.path.join(args.data, "selfplay"),
-                  "--hidden", str(hidden), "--epochs", str(args.epochs), "--out", candidate], logfile)
+                  "--hidden", str(hidden), "--epochs", str(epochs), "--out", candidate], logfile)
         state["trained_on"] = n
         save_json(state_path, state)
         if rc != 0 or not os.path.exists(candidate):
