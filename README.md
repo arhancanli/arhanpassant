@@ -11,10 +11,11 @@ games.
 
 ## Status
 
-Version 0.1.0 is the starting point: magic-bitboard move generation, a full
-alpha-beta search and a hand-written evaluation. Neural-network (NNUE) versions
-trained on self-play take over through the loop below, and each promotion is
-recorded with the games it took and the strength it gained.
+Version 0.2.0 is the first neural-network version: a 128-unit NNUE trained on
+3.5 million of the engine's own self-play positions. It passed the gate against
+version 0.1.0 (hand-written evaluation) by +83 Elo (95% interval +61 to +106)
+over 720 games. Every promotion is recorded in [`forge/ledger.json`](forge/ledger.json)
+with the games it took and the strength it gained.
 
 ## What is inside
 
