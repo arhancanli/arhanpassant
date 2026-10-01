@@ -4,18 +4,18 @@ version = 4
 
 [[package]]
 name = "arhanpassant"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "arhanpassant-arena"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arhanpassant",
 ]
 
 [[package]]
 name = "arhanpassant-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arhanpassant",
 ]
