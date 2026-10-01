@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["engine", "arena"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Arhan Canli"]
+repository = "https://github.com/arhancanli/arhanpassant"
+homepage = "https://github.com/arhancanli/arhanpassant"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# Release speed with symbols, for profiling.
+[profile.profiling]
+inherits = "release"
+debug = true

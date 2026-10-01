@@ -1,0 +1,17 @@
+/target
+**/target
+*.profraw
+.DS_Store
+/forge/state/
+/forge/data/
+/forge/runs/
+/tools/bin/
+/tools/books/
+/.venv/
+__pycache__/
+*.pyc
+node_modules/
+/pkg/
+*.db
+.env
+.env.*

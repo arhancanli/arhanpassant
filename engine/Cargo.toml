@@ -1,0 +1,25 @@
+[package]
+name = "arhanpassant"
+description = "A UCI chess engine and chess library: magic-bitboard move generation, NNUE evaluation, and a self-improvement loop that keeps making it stronger."
+readme = "../README.md"
+keywords = ["chess", "engine", "uci", "nnue", "bitboard"]
+categories = ["games", "game-engines"]
+build = "build.rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "arhanpassant"
+path = "src/lib.rs"
+
+[[bin]]
+name = "arhanpassant"
+path = "src/main.rs"
+
+[dependencies]
+
+[dev-dependencies]

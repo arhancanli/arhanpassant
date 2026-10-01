@@ -1,0 +1,16 @@
+[package]
+name = "arhanpassant-arena"
+description = "Match runner and SPRT gate for UCI chess engines."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "arena"
+path = "src/main.rs"
+
+[dependencies]
+arhanpassant = { path = "../engine" }
