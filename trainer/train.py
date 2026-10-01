@@ -27,21 +27,61 @@ REC = 32
 QA, QB, SCALE = 255, 64, 400.0
 
 
-def load(paths):
-    files = []
-    for p in paths:
-        p = os.path.expanduser(p)
-        files += sorted(glob.glob(os.path.join(p, "**", "*.bin"), recursive=True)) if os.path.isdir(p) else [p]
-    if not files:
-        sys.exit("no data files found")
-    arrays = []
-    for f in files:
-        a = np.fromfile(f, dtype=np.uint8)
-        n = len(a) // REC
-        arrays.append(a[: n * REC].reshape(n, REC))
-    data = np.concatenate(arrays)
-    print(f"loaded {len(data):,} positions from {len(files)} files", flush=True)
-    return data
+BLOCK = 4096  # records read contiguously; blocks are shuffled, then records within a buffer
+
+
+class Dataset:
+    """Self-play records memory-mapped from many files, read in shuffled blocks.
+
+    Files can be far larger than memory: each epoch visits every block once in
+    random order and shuffles records inside a buffer of many blocks. Every
+    `val_every`-th block is held out for validation, so the split is the same
+    in every run and never mixes with training.
+    """
+
+    def __init__(self, paths, val_every=100, max_positions=0):
+        files = []
+        for p in paths:
+            p = os.path.expanduser(p)
+            files += sorted(glob.glob(os.path.join(p, "**", "*.bin"), recursive=True)) if os.path.isdir(p) else [p]
+        if not files:
+            sys.exit("no data files found")
+        self.maps, blocks = [], []
+        total = 0
+        for f in files:
+            n = os.path.getsize(f) // REC
+            if n == 0:
+                continue
+            if max_positions and total + n > max_positions:
+                n = max_positions - total
+            m = np.memmap(f, dtype=np.uint8, mode="r", shape=(n * REC,)).reshape(n, REC)
+            fi = len(self.maps)
+            self.maps.append(m)
+            blocks += [(fi, s, min(BLOCK, n - s)) for s in range(0, n, BLOCK)]
+            total += n
+            if max_positions and total >= max_positions:
+                break
+        self.val_blocks = [b for i, b in enumerate(blocks) if i % val_every == val_every - 1]
+        self.train_blocks = [b for i, b in enumerate(blocks) if i % val_every != val_every - 1]
+        self.n_train = sum(b[2] for b in self.train_blocks)
+        self.n_val = sum(b[2] for b in self.val_blocks)
+        print(f"{total:,} positions in {len(self.maps)} files (train {self.n_train:,}, val {self.n_val:,})", flush=True)
+
+    def read(self, block):
+        fi, start, n = block
+        return np.asarray(self.maps[fi][start : start + n])
+
+    def batches(self, blocks, batch_size, rng=None, buffer_blocks=64):
+        order = list(blocks)
+        if rng is not None:
+            rng.shuffle(order)
+        for i in range(0, len(order), buffer_blocks):
+            buf = np.concatenate([self.read(b) for b in order[i : i + buffer_blocks]])
+            if rng is not None:
+                buf = buf[rng.permutation(len(buf))]
+            for j in range(0, len(buf) - batch_size + 1, batch_size):
+                chunk = buf[j : j + batch_size]
+                yield chunk.shape[0], decode(chunk)
 
 
 def decode(batch):
@@ -93,12 +133,6 @@ def to_inputs(dec, b, device):
     return stm, nstm, torch.from_numpy(score).to(device), torch.from_numpy(result).to(device)
 
 
-def batches(data, idx, batch_size):
-    for i in range(0, len(idx) - batch_size + 1, batch_size):
-        chunk = data[np.sort(idx[i : i + batch_size])]
-        yield chunk.shape[0], decode(chunk)
-
-
 def prefetch(gen, depth=6):
     q = queue.Queue(maxsize=depth)
     done = object()
@@ -139,7 +173,7 @@ def main():
     ap.add_argument("--batch", type=int, default=16384)
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--wdl", type=float, default=0.3, help="weight of the game result in the target")
-    ap.add_argument("--val", type=float, default=0.01, help="held-out fraction (last games)")
+    ap.add_argument("--val-every", type=int, default=100, help="hold out every N-th block for validation")
     ap.add_argument("--max-positions", type=int, default=0)
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=1)
@@ -148,17 +182,12 @@ def main():
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    data = load(args.data)
-    if args.max_positions:
-        data = data[: args.max_positions]
-    n_val = max(args.batch, int(len(data) * args.val))
-    train_idx = np.arange(len(data) - n_val)
-    val_idx = np.arange(len(data) - n_val, len(data))
-    print(f"train {len(train_idx):,} val {len(val_idx):,} hidden {args.hidden} device {device}", flush=True)
+    data = Dataset(args.data, args.val_every, args.max_positions)
+    print(f"hidden {args.hidden} device {device}", flush=True)
 
     net = Net(args.hidden).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=0.0)
-    steps_per_epoch = len(train_idx) // args.batch
+    steps_per_epoch = data.n_train // args.batch
     total = steps_per_epoch * args.epochs
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 0.5 * (1 + math.cos(math.pi * min(s, total) / total)) * 0.99 + 0.01)
 
@@ -171,7 +200,7 @@ def main():
         net.eval()
         tot, n = 0.0, 0
         with torch.no_grad():
-            for b, dec in batches(data, val_idx, args.batch):
+            for b, dec in data.batches(data.val_blocks, args.batch):
                 tot += float(loss_of(*to_inputs(dec, b, device))) * b
                 n += b
         net.train()
@@ -182,9 +211,8 @@ def main():
     step = 0
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        perm = rng.permutation(train_idx)
         run, cnt = 0.0, 0
-        for b, dec in prefetch(batches(data, perm, args.batch)):
+        for b, dec in prefetch(data.batches(data.train_blocks, args.batch, rng)):
             loss = loss_of(*to_inputs(dec, b, device))
             opt.zero_grad(set_to_none=True)
             loss.backward()
