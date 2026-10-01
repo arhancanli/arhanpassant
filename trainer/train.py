@@ -177,7 +177,8 @@ def main():
         net.train()
         return tot / max(n, 1)
 
-    print(f"epoch 0 val {validate():.6f}", flush=True)
+    best = validate()
+    print(f"epoch 0 val {best:.6f}", flush=True)
     step = 0
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
@@ -191,15 +192,19 @@ def main():
             sched.step()
             with torch.no_grad():
                 net.out.weight.clamp_(-1.98, 1.98)
-            run += float(loss)
+            run += float(loss.detach())
             cnt += 1
             step += 1
         val = validate()
         rate = cnt * args.batch / (time.time() - t0)
-        print(f"epoch {epoch} train {run / max(cnt, 1):.6f} val {val:.6f} lr {sched.get_last_lr()[0]:.2e} {rate:,.0f} pos/s", flush=True)
-        export(net, args.out)
-        torch.save(net.state_dict(), args.out + ".pt")
-    print(f"saved {args.out}", flush=True)
+        kept = val < best
+        print(f"epoch {epoch} train {run / max(cnt, 1):.6f} val {val:.6f} lr {sched.get_last_lr()[0]:.2e} {rate:,.0f} pos/s{' (best, saved)' if kept else ''}", flush=True)
+        if kept:
+            # Keep the network from the epoch with the lowest held-out loss.
+            best = val
+            export(net, args.out)
+            torch.save(net.state_dict(), args.out + ".pt")
+    print(f"saved {args.out} (val {best:.6f})", flush=True)
 
 
 if __name__ == "__main__":

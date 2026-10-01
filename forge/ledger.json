@@ -1,0 +1,16 @@
+{
+  "gate": { "elo0": 0, "elo1": 5, "alpha": 0.05, "beta": 0.05, "tc": "8+0.08", "book": "UHO_4060_v4" },
+  "versions": [
+    {
+      "version": "0.1.0",
+      "date": "2026-10-01",
+      "change": "Baseline: alpha-beta search with a hand-written evaluation",
+      "status": "baseline",
+      "games": null,
+      "elo": null,
+      "eloLo": null,
+      "eloHi": null,
+      "llr": null
+    }
+  ]
+}
