@@ -53,6 +53,17 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Some("dump") => {
+            // Print records of a datagen file: placement, side to move, score, result.
+            let path = args.get(1).expect("dump FILE [N]");
+            let n: usize = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(10);
+            let bytes = std::fs::read(path).expect("read data file");
+            for chunk in bytes.chunks_exact(datagen::RECORD_SIZE).take(n) {
+                let (placement, score, result, stm) = datagen::decode(chunk.try_into().unwrap());
+                let side = if stm == arhanpassant::Color::White { "w" } else { "b" };
+                println!("{placement} {side} {score} {result}");
+            }
+        }
         _ => Uci::new().run(),
     }
 }
