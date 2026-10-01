@@ -32,37 +32,7 @@ if ! curl -fsS "$BASE/control/node.env?$SAS" -o /dev/null 2>/dev/null; then
   put control/node.env "$tmp/node.env"
 fi
 
-python3 - "$tmp/cloud-init.yaml" <<'PY'
-import os, sys
-env = open(os.path.expanduser("~/.arhanpassant/forge.env")).read()
-indent = lambda text, n: "".join(" " * n + line + "\n" for line in text.splitlines())
-bootstrap = """#!/bin/bash
-. /etc/arhanpassant.env
-curl -fsS --retry 10 --retry-delay 10 "$BASE/bootstrap/node.sh?$SAS" -o /usr/local/bin/arhanpassant-node
-chmod +x /usr/local/bin/arhanpassant-node
-systemctl daemon-reload
-systemctl enable --now arhanpassant-node
-"""
-unit = """[Unit]
-Description=ArhanPassant self-play node
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-ExecStart=/usr/local/bin/arhanpassant-node
-Restart=always
-RestartSec=30
-
-[Install]
-WantedBy=multi-user.target
-"""
-doc = "#cloud-config\npackage_update: true\npackages: [build-essential, curl]\nwrite_files:\n"
-doc += "  - path: /etc/arhanpassant.env\n    permissions: '0600'\n    content: |\n" + indent(env, 6)
-doc += "  - path: /usr/local/sbin/ap-bootstrap.sh\n    permissions: '0700'\n    content: |\n" + indent(bootstrap, 6)
-doc += "  - path: /etc/systemd/system/arhanpassant-node.service\n    content: |\n" + indent(unit, 6)
-doc += "runcmd:\n  - [bash, /usr/local/sbin/ap-bootstrap.sh]\n"
-open(sys.argv[1], "w").write(doc)
-PY
+python3 forge/azure/cloud-init.py "$tmp/cloud-init.yaml"
 
 az group create -n "$FLEET_RG" -l eastus --tags project=arhanpassant expires=2026-10-03 -o none
 common=(-g "$FLEET_RG" --image "$IMAGE" --admin-username apforge --generate-ssh-keys
