@@ -15,7 +15,8 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use crate::time::Instant;
+use std::time::Duration;
 
 pub const RECORD_SIZE: usize = 32;
 

@@ -13,7 +13,8 @@ use crate::tt::*;
 use crate::types::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use crate::time::Instant;
+use std::time::Duration;
 
 pub const MAX_PLY: usize = 128;
 pub const INF: i32 = 32001;

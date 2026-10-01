@@ -1,0 +1,15 @@
+[package]
+name = "arhanpassant-wasm"
+description = "WebAssembly build of the ArhanPassant chess engine for browsers."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+arhanpassant = { path = "../engine" }

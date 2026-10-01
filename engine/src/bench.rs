@@ -5,7 +5,7 @@ use crate::nnue::Network;
 use crate::position::Position;
 use crate::search::{Limits, Searcher, Shared};
 use std::sync::Arc;
-use std::time::Instant;
+use crate::time::Instant;
 
 pub const DEFAULT_DEPTH: i32 = 11;
 

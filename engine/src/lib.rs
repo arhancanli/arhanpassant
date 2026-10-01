@@ -14,8 +14,10 @@ pub mod nnue;
 pub mod params;
 pub mod position;
 pub mod search;
+pub mod notation;
 pub mod see;
 pub mod tt;
+pub mod time;
 pub mod types;
 pub mod uci;
 

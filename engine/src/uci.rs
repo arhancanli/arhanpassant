@@ -271,7 +271,7 @@ impl Uci {
                 "movestogo" => limits.movestogo = num(i),
                 "perft" => {
                     let depth = num(i).unwrap_or(1) as u32;
-                    let start = std::time::Instant::now();
+                    let start = crate::time::Instant::now();
                     let mut total = 0;
                     for (m, n) in perft_divide(&self.pos, depth) {
                         println!("{m}: {n}");
