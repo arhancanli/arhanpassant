@@ -26,7 +26,7 @@ macro_rules! tunables {
         pub fn set(name: &str, value: i32) -> bool {
             match name {
                 $(stringify!($name) => {
-                    if value < $min || value > $max { return false; }
+                    if !($min..=$max).contains(&value) { return false; }
                     store::$name.store(value, std::sync::atomic::Ordering::Relaxed);
                     true
                 })*

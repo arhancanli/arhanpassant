@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build
+        run: cargo build --release --workspace
+      - name: Unit and perft tests
+        run: cargo test --release --workspace
+      - name: Full perft suite and SPRT calibration
+        run: cargo test --release --workspace -- --ignored
+      - name: Bench
+        run: ./target/release/arhanpassant bench
+      - name: WebAssembly build
+        run: cargo build --release -p arhanpassant-wasm --target wasm32-unknown-unknown

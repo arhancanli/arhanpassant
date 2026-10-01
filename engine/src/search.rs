@@ -323,10 +323,9 @@ impl Searcher {
         } else if let Some(e) = tt_hit {
             static_eval = if e.eval != -INF && e.eval.abs() < MATE_IN_MAX { e.eval } else { self.evaluate(pos, ply) };
             eval = static_eval;
-            if (e.bound == BOUND_LOWER && tt_score > eval) || (e.bound == BOUND_UPPER && tt_score < eval) || e.bound == BOUND_EXACT {
-                if tt_score.abs() < MATE_IN_MAX {
-                    eval = tt_score;
-                }
+            let tt_better = (e.bound == BOUND_LOWER && tt_score > eval) || (e.bound == BOUND_UPPER && tt_score < eval) || e.bound == BOUND_EXACT;
+            if tt_better && tt_score.abs() < MATE_IN_MAX {
+                eval = tt_score;
             }
         } else {
             static_eval = self.evaluate(pos, ply);
@@ -453,12 +452,11 @@ impl Searcher {
                 self.pv_len[ply + 1] = ply + 1;
             }
             let new_depth = depth - 1 + ext;
-            let score;
-            if moves_searched == 0 {
-                score = -self.search::<PV>(&child, -beta, -alpha, new_depth, ply + 1, false);
+            let score = if moves_searched == 0 {
+                -self.search::<PV>(&child, -beta, -alpha, new_depth, ply + 1, false)
             } else {
                 let mut r = 0;
-                if depth >= 3 && moves_searched >= 1 + 2 * PV as usize {
+                if depth >= 3 && moves_searched > 2 * PV as usize {
                     r = lmr_base;
                     if is_quiet {
                         r -= hist / p::lmr_hist_div();
@@ -489,8 +487,8 @@ impl Searcher {
                 if PV && s > alpha && s < beta {
                     s = -self.search::<true>(&child, -beta, -alpha, new_depth, ply + 1, false);
                 }
-                score = s;
-            }
+                s
+            };
             self.pop_move();
             moves_searched += 1;
             if self.stopped {

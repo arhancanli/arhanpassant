@@ -115,7 +115,7 @@ impl TranspositionTable {
                 break;
             }
             let (e, a) = unpack(d);
-            let age_diff = ((32 + age as i32 - a as i32) & 31) as i32;
+            let age_diff = (32 + age as i32 - a as i32) & 31;
             let value = e.depth - 8 * age_diff;
             if value < victim_value {
                 victim_value = value;

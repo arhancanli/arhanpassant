@@ -58,8 +58,8 @@ fn main() {
             let path = args.get(1).expect("dump FILE [N]");
             let n: usize = args.get(2).and_then(|v| v.parse().ok()).unwrap_or(10);
             let bytes = std::fs::read(path).expect("read data file");
-            for chunk in bytes.chunks_exact(datagen::RECORD_SIZE).take(n) {
-                let (placement, score, result, stm) = datagen::decode(chunk.try_into().unwrap());
+            for chunk in bytes.as_chunks::<{ datagen::RECORD_SIZE }>().0.iter().take(n) {
+                let (placement, score, result, stm) = datagen::decode(chunk);
                 let side = if stm == arhanpassant::Color::White { "w" } else { "b" };
                 println!("{placement} {side} {score} {result}");
             }

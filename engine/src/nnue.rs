@@ -33,7 +33,7 @@ impl Network {
             return Err(format!("unsupported network version {}", u32_at(4)));
         }
         let hidden = u32_at(8) as usize;
-        if hidden == 0 || hidden > 8192 || hidden % 8 != 0 {
+        if hidden == 0 || hidden > 8192 || !hidden.is_multiple_of(8) {
             return Err(format!("bad hidden size {hidden}"));
         }
         let need = 12 + 2 * (768 * hidden + hidden + 2 * hidden) + 4;
@@ -42,7 +42,7 @@ impl Network {
         }
         let mut off = 12;
         let mut read_i16 = |n: usize| -> Vec<i16> {
-            let v = b[off..off + 2 * n].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
+            let v = b[off..off + 2 * n].as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect();
             off += 2 * n;
             v
         };
