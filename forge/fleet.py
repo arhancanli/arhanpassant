@@ -11,6 +11,8 @@ Reads BASE and SAS from ~/.arhanpassant/forge.env.
 """
 
 import datetime as dt
+import functools
+import http.client
 import json
 import os
 import time
@@ -36,6 +38,24 @@ def _url(name, query=""):
     return f"{base}/{urllib.parse.quote(name)}?{query}{sas}"
 
 
+def retried(fn):
+    """Retry a storage call through transient network failures (a dropped
+    connection once killed a test queue mid-test); HTTP errors are not retried."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        for attempt in range(6):
+            try:
+                return fn(*args, **kwargs)
+            except urllib.error.HTTPError:
+                raise
+            except (urllib.error.URLError, http.client.HTTPException, ConnectionError, TimeoutError, OSError):
+                if attempt == 5:
+                    raise
+                time.sleep(5 * 2 ** attempt)
+    return wrapper
+
+
+@retried
 def put(name, data):
     req = urllib.request.Request(_url(name), data=data, method="PUT",
                                  headers={"x-ms-blob-type": "BlockBlob", "x-ms-version": "2021-08-06"})
@@ -43,11 +63,13 @@ def put(name, data):
         assert r.status in (200, 201), r.status
 
 
+@retried
 def get(name):
     with urllib.request.urlopen(_url(name), timeout=120) as r:
         return r.read()
 
 
+@retried
 def list_names(prefix):
     base, sas = _env()
     names, marker = [], ""
