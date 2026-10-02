@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import subprocess
+import signal
 import sys
 import time
 
@@ -182,6 +183,8 @@ def promote_if_passed(args, state, candidate, result, change):
 
 
 def main():
+    # A plain kill (SIGTERM) unwinds normally, so a running fleet gate is closed, not left holding the fleet.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=os.path.expanduser("~/arhanpassant-data"))
     ap.add_argument("--engine", default=os.path.expanduser("~/arhanpassant-data/bin/ap-0.1.0"))

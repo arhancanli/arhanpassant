@@ -15,6 +15,7 @@ search.json (the accepted settings, which the forge loop also uses in its gates)
 
 import json
 import os
+import signal
 import sys
 import time
 
@@ -89,6 +90,8 @@ def run():
 
 
 def main():
+    # A plain kill (SIGTERM) unwinds normally, so a running fleet gate is closed, not left holding the fleet.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     cmd = sys.argv[1:2]
     if cmd == ["add"] and len(sys.argv) >= 5:
         add(sys.argv[2], sys.argv[3], fleet_test.options(sys.argv[4:]))
