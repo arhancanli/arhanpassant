@@ -96,7 +96,8 @@ class Dataset:
         fi, start, n = block
         return np.asarray(self.maps[fi][start : start + n])
 
-    def batches(self, blocks, batch_size, rng=None, buffer_blocks=64):
+    def chunks(self, blocks, batch_size, rng=None, buffer_blocks=64):
+        """Raw record batches: shuffled blocks, then shuffled records within a buffer."""
         order = list(blocks)
         if rng is not None:
             rng.shuffle(order)
@@ -105,8 +106,20 @@ class Dataset:
             if rng is not None:
                 buf = buf[rng.permutation(len(buf))]
             for j in range(0, len(buf) - batch_size + 1, batch_size):
-                chunk = buf[j : j + batch_size]
-                yield chunk.shape[0], decode(chunk)
+                yield buf[j : j + batch_size]
+
+    def batches(self, blocks, batch_size, rng=None, workers=4):
+        """Decoded batches; decoding runs on several threads (NumPy releases the GIL)."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(workers) as pool:
+            pending = []
+            for chunk in self.chunks(blocks, batch_size, rng):
+                pending.append(pool.submit(lambda c: (c.shape[0], decode(c)), chunk))
+                if len(pending) >= 2 * workers:
+                    yield pending.pop(0).result()
+            for f in pending:
+                yield f.result()
 
 
 def decode(batch):

@@ -153,6 +153,8 @@ def main():
     ap.add_argument("--selfplay-nodes", type=int, default=5000)
     ap.add_argument("--min-new", type=int, default=5_000_000, help="new positions needed before the next attempt")
     ap.add_argument("--samples", type=int, default=1_200_000_000, help="training samples per round (sets the epoch count)")
+    ap.add_argument("--input-buckets", type=int, default=8, help="king buckets for new networks (1 or 8)")
+    ap.add_argument("--output-buckets", type=int, default=8, help="piece-count output heads for new networks")
     ap.add_argument("--once", action="store_true", help="run a single round and exit")
     args = ap.parse_args()
 
@@ -182,13 +184,15 @@ def main():
         state["attempts"] += 1
         hidden = hidden_for(n)
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
-        candidate = os.path.join(args.data, "nets", f"cand-{stamp}-h{hidden}.nnue")
+        layout = f"-{args.input_buckets}x{args.output_buckets}" if args.input_buckets * args.output_buckets > 1 else ""
+        candidate = os.path.join(args.data, "nets", f"cand-{stamp}-h{hidden}{layout}.nnue")
         os.makedirs(os.path.dirname(candidate), exist_ok=True)
         log(f"round {state['attempts']}: training h{hidden} on {n:,} positions -> {candidate}")
         # A fixed sample budget keeps each round's training time steady as data grows.
         epochs = max(2, min(15, args.samples // max(n, 1)))
         rc = run([sys.executable, os.path.join(ROOT, "trainer", "train.py"), "--data", os.path.join(args.data, "selfplay"),
-                  "--hidden", str(hidden), "--epochs", str(epochs), "--out", candidate], logfile)
+                  "--hidden", str(hidden), "--epochs", str(epochs), "--input-buckets", str(args.input_buckets),
+                  "--output-buckets", str(args.output_buckets), "--out", candidate], logfile)
         state["trained_on"] = n
         state["sizes"] = {f: os.path.getsize(f) for f in files}
         save_json(state_path, state)
