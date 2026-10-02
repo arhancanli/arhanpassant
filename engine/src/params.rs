@@ -65,11 +65,11 @@ tunables! {
     qs_see: 0, -100, 100;
     tm_soft_pct: 60, 30, 120;     // soft limit as % of base allocation
     tm_hard_mult: 4, 2, 8;
-    // Search additions measured on the fleet before they ship; 0 turns each off.
-    tm_nodes: 0, 0, 1;            // scale the soft limit by best-move effort and stability
+    // Search additions measured on the fleet (forge/tests.json); 0 turns each off.
+    tm_nodes: 1, 0, 1;            // scale the soft limit by best-move effort and stability (+15.5 Elo)
     tm_node_base: 150, 100, 250;  // x100
     tm_node_mult: 135, 50, 250;   // x100
-    corr_pawn: 0, 0, 256;         // pawn-structure eval correction, 128 = full weight
+    corr_pawn: 128, 0, 256;       // pawn-structure eval correction, 128 = full weight (+29.4 Elo)
     razor_margin: 0, 0, 600;
     qs_fut_margin: 0, 0, 400;
     lmr_deeper: 0, 0, 1;          // re-search deeper or shallower after a reduced search fails high
