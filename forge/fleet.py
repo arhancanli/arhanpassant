@@ -60,10 +60,46 @@ def list_names(prefix):
             return names
 
 
+SRC_RECORD = os.path.expanduser("~/arhanpassant-data/forge/fleet-src.txt")
+
+
+def current_src():
+    try:
+        return open(SRC_RECORD).read().strip() or "src/current.tar.gz"
+    except FileNotFoundError:
+        return "src/current.tar.gz"
+
+
+def upload_src(repo):
+    """Upload the engine source at HEAD (git's tracked files only); nodes rebuild on their next chunk."""
+    import subprocess
+    commit = subprocess.run(["git", "-C", repo, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    data = subprocess.run(["git", "-C", repo, "archive", "--format=tar.gz", "HEAD"], capture_output=True, check=True).stdout
+    name = f"src/{commit}.tar.gz"
+    put(name, data)
+    open(SRC_RECORD, "w").write(name + "\n")
+    return name
+
+
+def read_control():
+    env = {}
+    for line in get("control/node.env").decode().splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            env[k] = v
+    return env
+
+
+def write_control(**changes):
+    env = read_control()
+    env.update({k.upper(): str(v) for k, v in changes.items()})
+    put("control/node.env", "".join(f"{k}={v}\n" for k, v in env.items()).encode())
+
+
 def set_net(net_path, tag, nodes=8000, hours=0.15):
     name = os.path.basename(net_path)
     put(f"nets/{name}", open(net_path, "rb").read())
-    control = f"SRC=src/current.tar.gz\nNET=nets/{name}\nNODES={nodes}\nHOURS={hours}\nTAG={tag}\nPAUSE=0\n"
+    control = f"SRC={current_src()}\nNET=nets/{name}\nNODES={nodes}\nHOURS={hours}\nTAG={tag}\nPAUSE=0\n"
     put("control/node.env", control.encode())
 
 

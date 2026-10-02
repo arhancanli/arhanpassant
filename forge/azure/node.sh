@@ -59,6 +59,15 @@ gate_batch() {
   for n in "$cand" "$champ"; do
     [ -f "nets/$(basename "$n")" ] || fetch "$n" "nets/$(basename "$n")" || return 1
   done
+  # Refuse to play unless this engine really loads both networks (an engine that
+  # cannot read a network format would silently fall back to another evaluation).
+  local n
+  for n in "$cand" "$champ"; do
+    if ! printf 'setoption name EvalFile value nets/%s\nisready\neval\nquit\n' "$(basename "$n")" | ./arhanpassant 2>&1 | grep -q '^nnue '; then
+      log "gate $gid: this engine cannot load $(basename "$n"); skipping"
+      return 1
+    fi
+  done
   if [ ! -f book.epd ]; then
     curl -fsSL -o book.zip https://github.com/official-stockfish/books/raw/master/UHO_4060_v4.epd.zip || return 1
     python3 -c "import zipfile; z = zipfile.ZipFile('book.zip'); open('book.epd', 'wb').write(z.read(z.namelist()[0]))" || return 1
