@@ -29,6 +29,65 @@
       "eloLo": 61.1,
       "eloHi": 105.8,
       "llr": 2.96
+    },
+    {
+      "version": "0.3.0",
+      "date": "2026-10-01",
+      "change": "NNUE network, 256 hidden units, trained on 45.3M self-play positions",
+      "status": "promoted",
+      "games": 414,
+      "elo": 232.6,
+      "eloLo": 204.0,
+      "eloHi": 264.1,
+      "llr": 2.96,
+      "net": "champion-0.3.0.nnue"
+    },
+    {
+      "version": "0.4.0",
+      "date": "2026-10-02",
+      "change": "NNUE network, 256 hidden units, trained on 86.5M self-play positions",
+      "status": "promoted",
+      "games": 748,
+      "elo": 51.5,
+      "eloLo": 34.4,
+      "eloHi": 68.8,
+      "llr": 2.96,
+      "net": "champion-0.4.0.nnue"
+    },
+    {
+      "version": "0.5.0",
+      "date": "2026-10-02",
+      "change": "NNUE network, 512 hidden units, trained on 120.6M self-play positions",
+      "status": "promoted",
+      "games": 1980,
+      "elo": 19.9,
+      "eloLo": 9.3,
+      "eloHi": 30.4,
+      "llr": 2.97,
+      "net": "champion-0.5.0.nnue"
+    },
+    {
+      "version": "0.6.0",
+      "date": "2026-10-02",
+      "change": "NNUE network, 512 hidden units, trained on 199.0M self-play positions",
+      "status": "promoted",
+      "games": 836,
+      "elo": 43.9,
+      "eloLo": 27.8,
+      "eloHi": 60.1,
+      "llr": 2.95,
+      "net": "champion-0.6.0.nnue"
+    },
+    {
+      "version": "0.7.0",
+      "date": "2026-10-02",
+      "change": "NNUE network, 512 hidden units, trained on 235.0M self-play positions",
+      "status": "promoted",
+      "games": 1188,
+      "elo": 27.6,
+      "eloLo": 14.9,
+      "eloHi": 40.2,
+      "llr": 2.95
     }
   ]
 }
