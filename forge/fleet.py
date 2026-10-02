@@ -4,6 +4,8 @@
 - remote_gate(): run an SPRT gate on the fleet. Nodes play batches of game
   pairs (forge/azure/node.sh, gate_batch) and upload pentanomial results; this
   sums them and decides with forge/sprt.py, the Python twin of the arena's test.
+  A gate compares two networks, or two sets of search settings (UCI options)
+  on one build, or both. Only one gate runs at a time.
 
 Reads BASE and SAS from ~/.arhanpassant/forge.env.
 """
@@ -12,6 +14,7 @@ import datetime as dt
 import json
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from defusedxml import ElementTree as ET
@@ -117,14 +120,34 @@ def nodes_alive(max_age_minutes=45):
     return alive
 
 
+def running_gate():
+    """The gate currently running on the fleet, or None."""
+    try:
+        g = json.loads(get("control/gate.json"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise
+    return g if g.get("status") == "running" else None
+
+
 def remote_gate(candidate, champion, tc="8+0.08", elo0=0.0, elo1=5.0, alpha=0.05, beta=0.05,
-                max_games=12000, pairs=16, stall_minutes=30, log=print):
-    """Run a distributed SPRT; returns an arena-style result dict, or None if the fleet stalls."""
+                max_games=12000, pairs=16, stall_minutes=30, log=print,
+                cand_opts=None, champ_opts=None, src=None, name=None):
+    """Run a distributed SPRT; returns an arena-style result dict, or None if the fleet stalls.
+
+    cand_opts / champ_opts are UCI options for each side; src names the build
+    every participating node must have (nodes on another build sit the gate out).
+    """
+    busy = running_gate()
+    if busy:
+        raise RuntimeError(f"gate {busy['id']} ({busy.get('name') or busy['candidate']}) is still running")
     gid = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
-    for path in (candidate, champion):
+    for path in {candidate, champion}:
         put(f"nets/{os.path.basename(path)}", open(path, "rb").read())
     gate = {"id": gid, "status": "running", "candidate": f"nets/{os.path.basename(candidate)}",
-            "champion": f"nets/{os.path.basename(champion)}", "tc": tc, "pairs": pairs, "elo0": elo0, "elo1": elo1}
+            "champion": f"nets/{os.path.basename(champion)}", "tc": tc, "pairs": pairs, "elo0": elo0, "elo1": elo1,
+            "cand_opts": cand_opts or {}, "champ_opts": champ_opts or {}, "src": src, "name": name}
     put("control/gate.json", json.dumps(gate).encode())
     lower, upper = sprt.bounds(alpha, beta)
     penta, wins, losses, draws, seen = [0] * 5, 0, 0, 0, set()
@@ -165,7 +188,8 @@ def remote_gate(candidate, champion, tc="8+0.08", elo0=0.0, elo1=5.0, alpha=0.05
         put("control/gate.json", json.dumps(gate).encode())
     e, lo, hi = sprt.elo_estimate(penta)
     return {
-        "engine": os.path.basename(candidate), "baseline": os.path.basename(champion), "tc": tc, "where": "fleet",
+        "id": gid, "name": name, "engine": os.path.basename(candidate), "baseline": os.path.basename(champion),
+        "cand_opts": cand_opts or {}, "champ_opts": champ_opts or {}, "src": src, "tc": tc, "where": "fleet",
         "batches": len(seen), "games": wins + losses + draws, "wins": wins, "losses": losses, "draws": draws,
         "penta": penta, "elo": e, "elo_lo": lo, "elo_hi": hi,
         "sprt": {"elo0": elo0, "elo1": elo1, "alpha": alpha, "beta": beta, "llr": llr, "lower": lower, "upper": upper},

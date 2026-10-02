@@ -4,6 +4,12 @@ use crate::types::*;
 
 pub const HIST_MAX: i32 = 16384;
 
+/// Correction history: per side to move and pawn structure, a running average
+/// of how far search results landed from the static evaluation (cp x GRAIN).
+pub const CORR_SIZE: usize = 16384;
+pub const CORR_GRAIN: i32 = 256;
+pub const CORR_MAX: i32 = 64 * CORR_GRAIN;
+
 /// (piece index 0..12 or 12 for "none", destination square)
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct ContKey {
@@ -24,6 +30,8 @@ pub struct History {
     pub capture: [[[i16; 6]; 64]; 12],
     /// [prev piece][prev to] -> refutation
     pub counter: [[Move; 64]; 13],
+    /// [colour][pawn key]
+    pub corr: Vec<[i16; CORR_SIZE]>,
 }
 
 #[inline(always)]
@@ -40,6 +48,7 @@ impl History {
             cont: vec![[[[0; 64]; 12]; 64]; 13],
             capture: [[[0; 6]; 64]; 12],
             counter: [[Move::NULL; 64]; 13],
+            corr: vec![[0; CORR_SIZE]; 2],
         })
     }
 
@@ -50,6 +59,9 @@ impl History {
         }
         self.capture = [[[0; 6]; 64]; 12];
         self.counter = [[Move::NULL; 64]; 13];
+        for c in self.corr.iter_mut() {
+            *c = [0; CORR_SIZE];
+        }
     }
 
     #[inline(always)]
@@ -82,4 +94,28 @@ impl History {
     pub fn update_capture(&mut self, piece: Piece, to: Square, victim: PieceType, bonus: i32) {
         gravity(&mut self.capture[piece.idx()][to as usize][victim.idx()], bonus);
     }
+
+    /// Correction (in cp) for a static evaluation, scaled by `weight` / 128.
+    #[inline(always)]
+    pub fn correction(&self, stm: Color, key: usize, weight: i32) -> i32 {
+        self.corr[stm.idx()][key] as i32 * weight / (CORR_GRAIN * 128)
+    }
+
+    /// Move the correction toward `error` (search result minus raw static eval, cp).
+    pub fn update_correction(&mut self, stm: Color, key: usize, depth: i32, error: i32) {
+        let w = (depth + 1).min(16);
+        let e = &mut self.corr[stm.idx()][key];
+        let target = (error * CORR_GRAIN).clamp(-CORR_MAX, CORR_MAX);
+        *e = ((*e as i32 * (256 - w) + target * w) / 256).clamp(-CORR_MAX, CORR_MAX) as i16;
+    }
+}
+
+/// Index of the pawn structure in the correction table.
+#[inline(always)]
+pub fn pawn_key(white_pawns: Bitboard, black_pawns: Bitboard) -> usize {
+    let mut x = white_pawns.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ black_pawns.wrapping_mul(0xC2B2_AE3D_27D4_EB4F).rotate_left(31);
+    x ^= x >> 29;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 32;
+    x as usize & (CORR_SIZE - 1)
 }

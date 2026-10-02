@@ -52,9 +52,29 @@ build() {
 gate_batch() {
   fetch control/gate.json gate.json 2>/dev/null || return 1
   local fields
-  fields=$(python3 -c "import json; g = json.load(open('gate.json')); print(g.get('status', ''), g['id'], g['candidate'], g['champion'], g['tc'], g.get('pairs', 16))" 2>/dev/null) || return 1
-  read -r status gid cand champ gtc pairs <<< "$fields"
+  fields=$(python3 -c "import json; g = json.load(open('gate.json')); print(g.get('status', ''), g['id'], g['candidate'], g['champion'], g['tc'], g.get('pairs', 16), g.get('src') or '-')" 2>/dev/null) || return 1
+  read -r status gid cand champ gtc pairs gsrc <<< "$fields"
   [ "$status" = "running" ] || return 1
+  # A gate that tests an engine change names the build it needs.
+  if [ "$gsrc" != "-" ] && [ "$(cat built-from 2>/dev/null)" != "$gsrc" ]; then
+    log "gate $gid needs $gsrc; this node has $(cat built-from 2>/dev/null); skipping"
+    return 1
+  fi
+  # Per-side UCI options (search settings under test), one opt.NAME=VALUE per line.
+  python3 - <<'PY' || { log "gate $gid: unreadable options"; return 1; }
+import json, re
+g = json.load(open("gate.json"))
+name, value = re.compile(r"^[A-Za-z0-9_]+$"), re.compile(r"^[-A-Za-z0-9_.]+$")
+for side in ("cand", "champ"):
+    with open(f"{side}.args", "w") as f:
+        for k, v in (g.get(f"{side}_opts") or {}).items():
+            if not name.match(k) or not value.match(str(v)):
+                raise SystemExit(f"bad option {k}={v}")
+            f.write(f"opt.{k}={v}\n")
+PY
+  local cand_args=() champ_args=()
+  mapfile -t cand_args < cand.args
+  mapfile -t champ_args < champ.args
   mkdir -p nets
   for n in "$cand" "$champ"; do
     [ -f "nets/$(basename "$n")" ] || fetch "$n" "nets/$(basename "$n")" || return 1
@@ -80,8 +100,8 @@ gate_batch() {
   seed=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
   log "gate $gid batch: $pairs pairs, concurrency $conc"
   src/target/release/arena \
-    --engine name=candidate cmd=./arhanpassant "opt.EvalFile=nets/$(basename "$cand")" \
-    --engine name=champion cmd=./arhanpassant "opt.EvalFile=nets/$(basename "$champ")" \
+    --engine name=candidate cmd=./arhanpassant "opt.EvalFile=nets/$(basename "$cand")" ${cand_args[@]+"${cand_args[@]}"} \
+    --engine name=champion cmd=./arhanpassant "opt.EvalFile=nets/$(basename "$champ")" ${champ_args[@]+"${champ_args[@]}"} \
     --tc "$gtc" --book book.epd --concurrency "$conc" --games $((2 * pairs)) --seed "$seed" \
     --quiet --out gate-batch.json >> "$LOG" 2>&1 || return 1
   put "gates/$gid/$HOST-$(date -u +%Y%m%dT%H%M%S).json" gate-batch.json || return 1

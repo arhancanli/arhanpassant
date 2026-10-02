@@ -3,12 +3,12 @@
 //! and reduction heuristics. Several threads share one table (lazy SMP).
 
 use crate::eval;
-use crate::history::{ContKey, History};
+use crate::history::{pawn_key, ContKey, History};
 use crate::movepick::MovePicker;
 use crate::nnue::{Accumulators, Network};
 use crate::params as p;
 use crate::position::Position;
-use crate::see::see_ge;
+use crate::see::{see_ge, see_value};
 use crate::tt::*;
 use crate::types::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,6 +21,9 @@ pub const INF: i32 = 32001;
 pub const MATE: i32 = 32000;
 pub const MATE_IN_MAX: i32 = MATE - MAX_PLY as i32;
 pub const DRAW: i32 = 0;
+
+/// Soft time limit scale by how many iterations in a row the best move held.
+const STABILITY: [f64; 5] = [2.5, 1.2, 0.9, 0.8, 0.75];
 
 #[derive(Clone, Debug, Default)]
 pub struct Limits {
@@ -118,6 +121,8 @@ pub struct Searcher {
     main_thread: bool,
     root_best: (Move, i32),
     lmr: Box<[[i32; 64]; 64]>,
+    /// Nodes spent below each root move [from][to] in this search.
+    root_nodes: Box<[[u64; 64]; 64]>,
     acc: Option<Accumulators>,
     /// Print UCI info lines (main thread of an interactive search).
     pub verbose: bool,
@@ -143,6 +148,7 @@ impl Searcher {
             main_thread: true,
             root_best: (Move::NULL, -INF),
             lmr: Box::new([[0; 64]; 64]),
+            root_nodes: Box::new([[0; 64]; 64]),
             acc,
             verbose: true,
         }
@@ -171,6 +177,17 @@ impl Searcher {
         // Damp evaluations as the fifty-move counter grows.
         let raw = raw * (200 - pos.halfmove_clock() as i32) / 200;
         raw.clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
+    }
+
+    /// Static evaluation adjusted by what search has learned about this pawn structure.
+    #[inline(always)]
+    fn corrected(&self, pos: &Position, raw: i32) -> i32 {
+        let w = p::corr_pawn();
+        if w == 0 {
+            return raw;
+        }
+        let key = pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn));
+        (raw + self.history.correction(pos.side_to_move(), key, w)).clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
     }
 
     #[inline(always)]
@@ -314,24 +331,29 @@ impl Searcher {
         }
         let tt_pv = PV || tt_hit.is_some_and(|e| e.pv);
 
-        // Static evaluation.
+        // Static evaluation: the raw value is what the table keeps, the corrected
+        // value is what pruning decisions use.
+        let raw_eval;
         let static_eval;
         let mut eval;
         if in_check {
+            raw_eval = -INF;
             static_eval = -INF;
             eval = -INF;
         } else if let Some(e) = tt_hit {
-            static_eval = if e.eval != -INF && e.eval.abs() < MATE_IN_MAX { e.eval } else { self.evaluate(pos, ply) };
+            raw_eval = if e.eval != -INF && e.eval.abs() < MATE_IN_MAX { e.eval } else { self.evaluate(pos, ply) };
+            static_eval = self.corrected(pos, raw_eval);
             eval = static_eval;
             let tt_better = (e.bound == BOUND_LOWER && tt_score > eval) || (e.bound == BOUND_UPPER && tt_score < eval) || e.bound == BOUND_EXACT;
             if tt_better && tt_score.abs() < MATE_IN_MAX {
                 eval = tt_score;
             }
         } else {
-            static_eval = self.evaluate(pos, ply);
+            raw_eval = self.evaluate(pos, ply);
+            static_eval = self.corrected(pos, raw_eval);
             eval = static_eval;
             if excluded.is_null() {
-                self.shared.tt.store(pos.hash(), Move::NULL, -INF, static_eval, 0, BOUND_NONE, tt_pv);
+                self.shared.tt.store(pos.hash(), Move::NULL, -INF, raw_eval, 0, BOUND_NONE, tt_pv);
             }
         }
         self.stack[ply].static_eval = static_eval;
@@ -340,6 +362,16 @@ impl Searcher {
 
         let us = pos.side_to_move();
         if !PV && !in_check && excluded.is_null() {
+            // Razoring: far below alpha at low depth, only captures can save it.
+            if p::razor_margin() > 0 && depth <= 4 && alpha.abs() < MATE_IN_MAX && eval + p::razor_margin() * depth <= alpha {
+                let score = self.qsearch::<false>(pos, alpha, alpha + 1, ply);
+                if self.stopped {
+                    return 0;
+                }
+                if score <= alpha {
+                    return score;
+                }
+            }
             // Reverse futility pruning.
             if depth <= p::rfp_depth() && eval.abs() < MATE_IN_MAX && eval - p::rfp_margin() * (depth - improving as i32) >= beta {
                 return (eval + beta) / 2;
@@ -369,6 +401,38 @@ impl Searcher {
                 }
                 if score >= beta {
                     return if score >= MATE_IN_MAX { beta } else { score };
+                }
+            }
+            // ProbCut: a capture that clears beta by a margin at reduced depth
+            // almost always clears beta at full depth.
+            let pc_beta = beta + p::probcut_margin();
+            if p::probcut_margin() > 0
+                && depth >= 5
+                && beta.abs() < MATE_IN_MAX
+                && !tt_hit.is_some_and(|e| e.depth >= depth - 3 && tt_score < pc_beta)
+            {
+                let (c1, c2) = self.cont_keys(ply);
+                let mut picker = MovePicker::qsearch(pos, tt_move, c1, c2);
+                while let Some(m) = picker.next(pos, &self.history) {
+                    if !see_ge(pos, m, pc_beta - static_eval) {
+                        continue;
+                    }
+                    let child = pos.after(m);
+                    self.stack[ply].current = m;
+                    self.stack[ply].cont = ContKey { piece: pos.moved_piece(m).0, to: m.to() };
+                    self.push_move(pos, m, &child, ply);
+                    let mut s = -self.qsearch::<false>(&child, -pc_beta, -pc_beta + 1, ply + 1);
+                    if s >= pc_beta {
+                        s = -self.search::<false>(&child, -pc_beta, -pc_beta + 1, depth - 4, ply + 1, !cut_node);
+                    }
+                    self.pop_move();
+                    if self.stopped {
+                        return 0;
+                    }
+                    if s >= pc_beta {
+                        self.shared.tt.store(pos.hash(), m, score_to_tt(s, ply), raw_eval, depth - 3, BOUND_LOWER, tt_pv);
+                        return s;
+                    }
                 }
             }
         }
@@ -451,7 +515,8 @@ impl Searcher {
             if PV {
                 self.pv_len[ply + 1] = ply + 1;
             }
-            let new_depth = depth - 1 + ext;
+            let mut new_depth = depth - 1 + ext;
+            let nodes_before = self.nodes;
             let score = if moves_searched == 0 {
                 -self.search::<PV>(&child, -beta, -alpha, new_depth, ply + 1, false)
             } else {
@@ -480,9 +545,15 @@ impl Searcher {
                     }
                     r = r.clamp(0, (new_depth - 1).max(0));
                 }
-                let mut s = -self.search::<false>(&child, -alpha - 1, -alpha, new_depth - r, ply + 1, true);
+                let reduced = new_depth - r;
+                let mut s = -self.search::<false>(&child, -alpha - 1, -alpha, reduced, ply + 1, true);
                 if s > alpha && r > 0 {
-                    s = -self.search::<false>(&child, -alpha - 1, -alpha, new_depth, ply + 1, !cut_node);
+                    if p::lmr_deeper() != 0 {
+                        new_depth += (s > best_score + 40 + 2 * new_depth) as i32 - (s < best_score + new_depth) as i32;
+                    }
+                    if new_depth > reduced {
+                        s = -self.search::<false>(&child, -alpha - 1, -alpha, new_depth, ply + 1, !cut_node);
+                    }
                 }
                 if PV && s > alpha && s < beta {
                     s = -self.search::<true>(&child, -beta, -alpha, new_depth, ply + 1, false);
@@ -491,6 +562,9 @@ impl Searcher {
             };
             self.pop_move();
             moves_searched += 1;
+            if root {
+                self.root_nodes[m.from() as usize][m.to() as usize] += self.nodes - nodes_before;
+            }
             if self.stopped {
                 return 0;
             }
@@ -566,7 +640,19 @@ impl Searcher {
             } else {
                 BOUND_UPPER
             };
-            self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), static_eval, depth, bound, tt_pv);
+            // Learn how far search landed from the static evaluation, when the
+            // result says something about it (not a capture, bound on the right side).
+            if p::corr_pawn() != 0
+                && !in_check
+                && !best_move.is_noisy()
+                && best_score.abs() < MATE_IN_MAX
+                && !(bound == BOUND_LOWER && best_score <= static_eval)
+                && !(bound == BOUND_UPPER && best_score >= static_eval)
+            {
+                let key = pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn));
+                self.history.update_correction(us, key, depth, best_score - raw_eval);
+            }
+            self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, depth, bound, tt_pv);
         }
         best_score
     }
@@ -605,15 +691,18 @@ impl Searcher {
         }
 
         let mut best_score;
+        let raw_eval;
         let static_eval;
         if in_check {
             best_score = -INF;
+            raw_eval = -INF;
             static_eval = -INF;
         } else {
-            static_eval = match tt_hit {
+            raw_eval = match tt_hit {
                 Some(e) if e.eval != -INF && e.eval.abs() < MATE_IN_MAX => e.eval,
                 _ => self.evaluate(pos, ply),
             };
+            static_eval = self.corrected(pos, raw_eval);
             best_score = static_eval;
             if let Some(e) = tt_hit {
                 if tt_score.abs() < MATE_IN_MAX
@@ -633,7 +722,20 @@ impl Searcher {
         let mut picker = MovePicker::qsearch(pos, tt_move, c1, c2);
         let mut best_move = Move::NULL;
         let mut moves_searched = 0;
+        let fut_base = if in_check || p::qs_fut_margin() == 0 { -INF } else { static_eval + p::qs_fut_margin() };
         while let Some(m) = picker.next(pos, &self.history) {
+            // Futility: a capture that cannot lift the score to alpha even with a margin.
+            if fut_base > -INF && m.promotion().is_none() && !pos.gives_check(m) {
+                let gain = fut_base + see_value(pos.captured(m).unwrap_or(PieceType::Pawn));
+                if gain <= alpha {
+                    best_score = best_score.max(gain);
+                    continue;
+                }
+                if fut_base <= alpha && !see_ge(pos, m, 1) {
+                    best_score = best_score.max(fut_base);
+                    continue;
+                }
+            }
             if !in_check && best_score > -MATE_IN_MAX && !see_ge(pos, m, p::qs_see()) {
                 continue;
             }
@@ -668,13 +770,15 @@ impl Searcher {
             return -MATE + ply as i32;
         }
         let bound = if best_score >= beta { BOUND_LOWER } else { BOUND_UPPER };
-        self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), static_eval, 0, bound, false);
+        self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, 0, bound, false);
         best_score
     }
 
     // ------------------------------------------------------------------ driver
 
-    fn set_time_limits(&mut self, stm: Color, limits: &Limits, move_overhead: u64) -> Option<Instant> {
+    /// Set the hard deadline; return the soft limit in ms and whether it may be
+    /// scaled by how the search is going (not for a fixed time per move).
+    fn set_time_limits(&mut self, stm: Color, limits: &Limits, move_overhead: u64) -> Option<(u64, bool)> {
         self.hard_deadline = None;
         let (time, inc) = match stm {
             Color::White => (limits.wtime, limits.winc.unwrap_or(0)),
@@ -683,7 +787,7 @@ impl Searcher {
         if let Some(mt) = limits.movetime {
             let t = mt.saturating_sub(move_overhead).max(1);
             self.hard_deadline = Some(self.start + Duration::from_millis(t));
-            return self.hard_deadline;
+            return Some((t, false));
         }
         let time = time?;
         let avail = time.saturating_sub(move_overhead).max(1);
@@ -692,7 +796,7 @@ impl Searcher {
         let soft = (base * p::tm_soft_pct() as u64 / 100).min(avail / 2).max(1);
         let hard = (base * p::tm_hard_mult() as u64).min(avail * 3 / 4).max(1);
         self.hard_deadline = Some(self.start + Duration::from_millis(hard));
-        Some(self.start + Duration::from_millis(soft))
+        Some((soft, true))
     }
 
     /// Search `root` (whose game history hashes, oldest first and including
@@ -724,10 +828,14 @@ impl Searcher {
         for e in self.stack.iter_mut() {
             *e = StackEntry::default();
         }
+        for r in self.root_nodes.iter_mut() {
+            *r = [0; 64];
+        }
         if let Some(acc) = &mut self.acc {
             acc.refresh(root, 0);
         }
-        let soft_deadline = if main_thread { self.set_time_limits(root.side_to_move(), limits, move_overhead) } else { None };
+        let soft_limit = if main_thread { self.set_time_limits(root.side_to_move(), limits, move_overhead) } else { None };
+        let mut stability = 0usize;
 
         let legal = root.legal_moves();
         let mut result = SearchResult { best_move: Move::NULL, score: 0, depth: 0, nodes: 0, pv: Vec::new() };
@@ -770,6 +878,11 @@ impl Searcher {
                 break;
             }
             if self.pv_len[0] > 0 {
+                if self.pv[0][0] == result.best_move {
+                    stability += 1;
+                } else {
+                    stability = 0;
+                }
                 result.best_move = self.pv[0][0];
             }
             result.score = score;
@@ -793,8 +906,17 @@ impl Searcher {
                         break;
                     }
                 }
-                if let Some(sd) = soft_deadline {
-                    if Instant::now() >= sd {
+                if let Some((soft, scalable)) = soft_limit {
+                    let mut limit = soft as f64;
+                    if scalable && p::tm_nodes() != 0 {
+                        // Spend less when one move takes most of the effort and keeps winning
+                        // iteration after iteration; more when the choice is contested.
+                        let b = result.best_move;
+                        let frac = self.root_nodes[b.from() as usize][b.to() as usize] as f64 / self.nodes.max(1) as f64;
+                        limit *= (p::tm_node_base() as f64 / 100.0 - frac) * p::tm_node_mult() as f64 / 100.0;
+                        limit *= STABILITY[stability.min(4)];
+                    }
+                    if self.start.elapsed().as_secs_f64() * 1000.0 >= limit {
                         break;
                     }
                 }
