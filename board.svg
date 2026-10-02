@@ -204,6 +204,7 @@
 <text x="3" y="181" class="c" fill="#dde4ea">5</text>
 <rect x="56" y="168" width="56" height="56" fill="#dde4ea"/>
 <rect x="112" y="168" width="56" height="56" fill="#7d93a7"/>
+<rect x="112" y="168" width="56" height="56" fill="rgba(242,184,75,0.55)"/>
 <rect x="168" y="168" width="56" height="56" fill="#dde4ea"/>
 <rect x="224" y="168" width="56" height="56" fill="#7d93a7"/>
 <rect x="280" y="168" width="56" height="56" fill="#dde4ea"/>
@@ -222,6 +223,7 @@
 <text x="3" y="69" class="c" fill="#dde4ea">7</text>
 <rect x="56" y="56" width="56" height="56" fill="#dde4ea"/>
 <rect x="112" y="56" width="56" height="56" fill="#7d93a7"/>
+<rect x="112" y="56" width="56" height="56" fill="rgba(242,184,75,0.55)"/>
 <rect x="168" y="56" width="56" height="56" fill="#dde4ea"/>
 <rect x="224" y="56" width="56" height="56" fill="#7d93a7"/>
 <rect x="280" y="56" width="56" height="56" fill="#dde4ea"/>
@@ -248,13 +250,13 @@
 <use href="#wp" xlink:href="#wp" x="56" y="336" width="56" height="56"/>
 <use href="#wp" xlink:href="#wp" x="112" y="336" width="56" height="56"/>
 <use href="#wp" xlink:href="#wp" x="168" y="336" width="56" height="56"/>
-<use href="#wp" xlink:href="#wp" x="224" y="336" width="56" height="56"/>
 <use href="#wp" xlink:href="#wp" x="280" y="336" width="56" height="56"/>
 <use href="#wp" xlink:href="#wp" x="336" y="336" width="56" height="56"/>
 <use href="#wp" xlink:href="#wp" x="392" y="336" width="56" height="56"/>
+<use href="#wp" xlink:href="#wp" x="224" y="224" width="56" height="56"/>
+<use href="#bp" xlink:href="#bp" x="112" y="168" width="56" height="56"/>
 <use href="#bp" xlink:href="#bp" x="0" y="56" width="56" height="56"/>
 <use href="#bp" xlink:href="#bp" x="56" y="56" width="56" height="56"/>
-<use href="#bp" xlink:href="#bp" x="112" y="56" width="56" height="56"/>
 <use href="#bp" xlink:href="#bp" x="168" y="56" width="56" height="56"/>
 <use href="#bp" xlink:href="#bp" x="224" y="56" width="56" height="56"/>
 <use href="#bp" xlink:href="#bp" x="280" y="56" width="56" height="56"/>

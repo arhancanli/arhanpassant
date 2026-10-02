@@ -1,13 +1,28 @@
 {
  "game": 1,
- "moves": [],
- "players": [],
+ "moves": [
+  "e2e4",
+  "c7c5"
+ ],
+ "players": [
+  "arhancanli"
+ ],
  "record": {
   "engine": 0,
   "community": 0,
   "draw": 0
  },
- "movers": {},
+ "movers": {
+  "arhancanli": 1
+ },
  "games": [],
- "last": null
+ "last": {
+  "game": 1,
+  "by": "arhancanli",
+  "move": "e4",
+  "reply": "1... c5",
+  "view": "it rates the position +0.23 for White",
+  "issue": 1,
+  "at": "2026-10-02T11:42:47Z"
+ }
 }
