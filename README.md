@@ -11,11 +11,17 @@ games.
 
 ## Status
 
-Version 0.2.0 is the first neural-network version: a 128-unit NNUE trained on
-3.5 million of the engine's own self-play positions. It passed the gate against
-version 0.1.0 (hand-written evaluation) by +83 Elo (95% interval +61 to +106)
-over 720 games. Every promotion is recorded in [`forge/ledger.json`](forge/ledger.json)
-with the games it took and the strength it gained.
+Version 0.7.0 plays with a 512-unit NNUE network trained on 235 million of the
+engine's own self-play positions. It is the sixth network in a row to pass the
+gate against its predecessor; every promotion is recorded in
+[`forge/ledger.json`](forge/ledger.json) with the games it took and the strength
+it gained.
+
+**Measured strength: about 3,026 Elo** (95% interval 2,989 to 3,063 from game
+statistics alone), from 480 games against Stockfish 19 at fixed `UCI_Elo`
+levels of 2500, 2800 and 3100. Stockfish calibrates those levels to the CCRL
+40/4 list at 120s+1s; these games were played at 10s+0.1s, so treat the
+absolute number as approximate. Details: [`forge/anchors.json`](forge/anchors.json).
 
 ## What is inside
 
