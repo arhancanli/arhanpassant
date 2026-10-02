@@ -39,6 +39,9 @@ echo "bench: $bench"
 
 cargo build --release -p arhanpassant-wasm --target wasm32-unknown-unknown
 cp target/wasm32-unknown-unknown/release/arhanpassant_wasm.wasm "$web/public/engine/arhanpassant.wasm"
+# The same engine with WebAssembly SIMD, about twice as fast; the site's worker picks it when the browser supports it.
+RUSTFLAGS="-C target-feature=+simd128" CARGO_TARGET_DIR=target/wasm-simd cargo build --release -p arhanpassant-wasm --target wasm32-unknown-unknown
+cp target/wasm-simd/wasm32-unknown-unknown/release/arhanpassant_wasm.wasm "$web/public/engine/arhanpassant-simd.wasm"
 
 python3 - "$sprt" "$version" "$change" "$web/src/data/ledger.json" forge/ledger.json <<'PY'
 import datetime, json, sys
@@ -66,7 +69,7 @@ PY
 
 git add engine/nets/default.nnue Cargo.toml Cargo.lock forge/ledger.json
 git commit -q -m "v$version: $change"
-(cd "$web" && git add public/engine/arhanpassant.wasm src/data/ledger.json && git commit -q -m "Engine v$version: $change")
+(cd "$web" && git add public/engine/arhanpassant.wasm public/engine/arhanpassant-simd.wasm src/data/ledger.json && git commit -q -m "Engine v$version: $change")
 echo
 echo "Committed v$version in both repos. Next:"
 echo "  git -C $(pwd) push && git -C $(pwd) tag -a v$version -m 'v$version' && git -C $(pwd) push origin v$version"
