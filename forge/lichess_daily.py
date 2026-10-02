@@ -19,6 +19,9 @@ import subprocess
 import sys
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import publish_data  # noqa: E402
+
 BOT = "arhanpassant"
 DATA = os.path.expanduser("~/arhanpassant-data")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -106,6 +109,7 @@ def main():
         json.dump(summary, f, indent=1)
         f.write("\n")
     print(json.dumps(entry))
+    publish_data.publish_quietly()
 
 
 if __name__ == "__main__":

@@ -19,7 +19,11 @@ import math
 import os
 import re
 import subprocess
+import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import publish_data  # noqa: E402
 
 DATA = os.path.expanduser("~/arhanpassant-data")
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -122,6 +126,7 @@ def main():
         json.dump(summary, f, indent=1)
         f.write("\n")
     log(json.dumps({m: e["games"] for m, e in entry["byMode"].items()}))
+    publish_data.publish_quietly(log)
 
 
 if __name__ == "__main__":

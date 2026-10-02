@@ -23,6 +23,7 @@ import sys
 import time
 
 import fleet
+import publish_data
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "forge", "ledger.json")
@@ -181,6 +182,7 @@ def promote_if_passed(args, state, candidate, result, change):
     save_json(LEDGER, ledger)
     state.update(champion_net=champion, champion_version=version, generation=state["generation"] + 1)
     log(f"PROMOTED {version}")
+    publish_data.publish_quietly(log)
     start_selfplay(args, state)
     if args.fleet:
         try:

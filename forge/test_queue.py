@@ -21,6 +21,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fleet_test  # noqa: E402
+import publish_data  # noqa: E402
 
 FORGE = os.path.expanduser("~/arhanpassant-data/forge")
 QUEUE = os.path.join(FORGE, "queue.json")
@@ -81,6 +82,7 @@ def run():
             continue
         q["done"].append({**item, "decision": entry["decision"], "elo": entry["elo"], "games": entry["games"]})
         save(QUEUE, q)
+        publish_data.publish_quietly(fleet_test.log)
         if entry["decision"] == "H1":
             s = load(SEARCH, {"accepted": {}, "history": []})
             s["accepted"].update(item["opts"])
