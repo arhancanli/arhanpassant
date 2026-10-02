@@ -47,8 +47,47 @@ build() {
   log "built: $(cat bench.txt)"
 }
 
+# Play one batch of a running distributed gate (control/gate.json) and upload
+# its result; returns non-zero when no gate is running or the batch failed.
+gate_batch() {
+  fetch control/gate.json gate.json 2>/dev/null || return 1
+  local fields
+  fields=$(python3 -c "import json; g = json.load(open('gate.json')); print(g.get('status', ''), g['id'], g['candidate'], g['champion'], g['tc'], g.get('pairs', 16))" 2>/dev/null) || return 1
+  read -r status gid cand champ gtc pairs <<< "$fields"
+  [ "$status" = "running" ] || return 1
+  mkdir -p nets
+  for n in "$cand" "$champ"; do
+    [ -f "nets/$(basename "$n")" ] || fetch "$n" "nets/$(basename "$n")" || return 1
+  done
+  if [ ! -f book.epd ]; then
+    curl -fsSL -o book.zip https://github.com/official-stockfish/books/raw/master/UHO_4060_v4.epd.zip || return 1
+    python3 -c "import zipfile; z = zipfile.ZipFile('book.zip'); open('book.epd', 'wb').write(z.read(z.namelist()[0]))" || return 1
+  fi
+  if [ ! -x src/target/release/arena ]; then
+    (cd src && cargo build --release -p arhanpassant-arena >> "$LOG" 2>&1) || return 1
+  fi
+  local conc=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))
+  local seed
+  seed=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
+  log "gate $gid batch: $pairs pairs, concurrency $conc"
+  src/target/release/arena \
+    --engine name=candidate cmd=./arhanpassant "opt.EvalFile=nets/$(basename "$cand")" \
+    --engine name=champion cmd=./arhanpassant "opt.EvalFile=nets/$(basename "$champ")" \
+    --tc "$gtc" --book book.epd --concurrency "$conc" --games $((2 * pairs)) --seed "$seed" \
+    --quiet --out gate-batch.json >> "$LOG" 2>&1 || return 1
+  put "gates/$gid/$HOST-$(date -u +%Y%m%dT%H%M%S).json" gate-batch.json || return 1
+  return 0
+}
+
 chunk=0
 while true; do
+  # Self-update: run the newest node script from storage at each chunk boundary.
+  if fetch bootstrap/node.sh node.sh.new 2>/dev/null && ! cmp -s node.sh.new /usr/local/bin/arhanpassant-node \
+      && bash -n node.sh.new; then
+    install -m 755 node.sh.new /usr/local/bin/arhanpassant-node
+    log "node script updated; restarting it"
+    exec /usr/local/bin/arhanpassant-node
+  fi
   # Defaults, then whatever the control file says.
   SRC=src/current.tar.gz; NET=; NODES=5000; HOURS=0.5; TAG=gen0; PAUSE=0
   if fetch control/node.env control.env 2>/dev/null; then
@@ -62,6 +101,10 @@ while true; do
   fi
   if [ ! -x ./arhanpassant ] || [ "$(cat built-from 2>/dev/null)" != "$SRC" ]; then
     build "$SRC" || { log "build failed"; sleep 120; continue; }
+  fi
+  # A running gate takes priority over self-play.
+  if gate_batch; then
+    continue
   fi
   NETARG=()
   if [ -n "$NET" ]; then

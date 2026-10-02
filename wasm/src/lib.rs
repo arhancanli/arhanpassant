@@ -9,6 +9,7 @@
 //! - `state <fen|startpos> <uci moves>`: position after the moves, legal moves with SAN, game status
 //! - `search <fen|startpos> <uci moves> <nodes> <movetime ms> <depth>`: best move (0 = no limit)
 //! - `rank <fen|startpos> <uci moves> <nodes per move>`: every legal move scored by a short search
+//! - `sanline <fen|startpos> <san moves>`: convert SAN moves to UCI, stopping at the first illegal one
 //! - `newgame`: clear the hash table and history
 //! - `version`
 
@@ -237,6 +238,36 @@ fn rank(fen: &str, moves: &str, nodes: u64) -> String {
     list(scored.iter().map(|(m, s)| format!("[{},{},{}]", esc(&m.to_uci()), esc(&pos.san(*m)), s)))
 }
 
+fn sanline(fen: &str, sans: &str) -> String {
+    let mut pos = if fen == "startpos" || fen.is_empty() {
+        Position::startpos()
+    } else {
+        match Position::from_fen(fen) {
+            Ok(p) => p,
+            Err(e) => return error(&e.to_string()),
+        }
+    };
+    let mut ucis = Vec::new();
+    let mut bad = None;
+    for (i, san) in sans.split_whitespace().enumerate() {
+        match pos.parse_san(san) {
+            Some(m) => {
+                ucis.push(m.to_uci());
+                pos.play(m);
+            }
+            None => {
+                bad = Some(format!("move {} ({san}) is not legal", i + 1));
+                break;
+            }
+        }
+    }
+    format!(
+        "{{\"uci\":{},\"error\":{}}}",
+        list(ucis.iter().map(|u| esc(u))),
+        bad.map_or("null".to_string(), |b| esc(&b))
+    )
+}
+
 fn dispatch(cmd: &str) -> String {
     let f: Vec<&str> = cmd.split('\t').collect();
     let num = |i: usize| f.get(i).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0);
@@ -244,6 +275,7 @@ fn dispatch(cmd: &str) -> String {
         "state" => state(f.get(1).copied().unwrap_or("startpos"), f.get(2).copied().unwrap_or("")),
         "search" => search(f.get(1).copied().unwrap_or("startpos"), f.get(2).copied().unwrap_or(""), num(3), num(4), num(5) as i32),
         "rank" => rank(f.get(1).copied().unwrap_or("startpos"), f.get(2).copied().unwrap_or(""), num(3)),
+        "sanline" => sanline(f.get(1).copied().unwrap_or("startpos"), f.get(2).copied().unwrap_or("")),
         "newgame" => {
             with_engine(|s| {
                 s.clear();

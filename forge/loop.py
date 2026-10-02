@@ -21,6 +21,8 @@ import subprocess
 import sys
 import time
 
+import fleet
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "forge", "ledger.json")
 REC = 32
@@ -52,6 +54,11 @@ def data_files(data):
 
 def positions(files):
     return sum(os.path.getsize(f) // REC for f in files)
+
+
+def grown_since(files, sizes):
+    """Positions added since `sizes` ({path: bytes}) was recorded; new files count in full."""
+    return sum(max(0, os.path.getsize(f) - sizes.get(f, 0)) // REC for f in files)
 
 
 def hidden_for(n):
@@ -102,6 +109,19 @@ def start_selfplay(args, state):
 
 def gate(args, candidate, state, logfile):
     out = os.path.join(args.data, "forge", f"sprt-{os.path.basename(candidate)}.json")
+    if args.fleet and state.get("champion_net"):
+        try:
+            alive = fleet.nodes_alive()
+            if alive >= args.fleet_min_nodes:
+                log(f"gate on the fleet ({alive} nodes reporting)")
+                r = fleet.remote_gate(candidate, state["champion_net"], tc=args.tc, elo0=args.elo0, elo1=args.elo1,
+                                      max_games=args.max_games, log=log)
+                if r:
+                    save_json(out, r)
+                    return r
+            log(f"fleet unavailable ({alive} nodes reporting); gating locally")
+        except Exception as e:  # network trouble: fall back to the local gate
+            log(f"fleet gate error ({e}); gating locally")
     champ = ["--engine", "name=champion", f"cmd={args.engine}"]
     if state.get("champion_net"):
         champ.append(f"opt.EvalFile={state['champion_net']}")
@@ -125,7 +145,10 @@ def main():
     ap.add_argument("--elo0", type=float, default=0.0)
     ap.add_argument("--elo1", type=float, default=5.0)
     ap.add_argument("--concurrency", type=int, default=4)
-    ap.add_argument("--max-games", type=int, default=30000)
+    ap.add_argument("--max-games", type=int, default=12000)
+    ap.add_argument("--fleet", action="store_true", help="run gates on the cloud fleet and keep its self-play on the champion")
+    ap.add_argument("--fleet-min-nodes", type=int, default=4)
+    ap.add_argument("--fleet-nodes", type=int, default=8000, help="nodes per move for fleet self-play")
     ap.add_argument("--selfplay-threads", type=int, default=4)
     ap.add_argument("--selfplay-nodes", type=int, default=5000)
     ap.add_argument("--min-new", type=int, default=5_000_000, help="new positions needed before the next attempt")
@@ -146,8 +169,11 @@ def main():
     while True:
         files = data_files(args.data)
         n = positions(files)
-        if n - state["trained_on"] < args.min_new:
-            log(f"waiting for data: {n:,} positions, {n - state['trained_on']:,} new of {args.min_new:,} needed")
+        # New data = growth since the last training round, so deleting old
+        # generations never looks like lost data and growing files count once.
+        fresh = grown_since(files, state["sizes"]) if "sizes" in state else n - state["trained_on"]
+        if fresh < args.min_new:
+            log(f"waiting for data: {n:,} positions, {fresh:,} new of {args.min_new:,} needed")
             if args.once:
                 return
             time.sleep(600)
@@ -164,6 +190,7 @@ def main():
         rc = run([sys.executable, os.path.join(ROOT, "trainer", "train.py"), "--data", os.path.join(args.data, "selfplay"),
                   "--hidden", str(hidden), "--epochs", str(epochs), "--out", candidate], logfile)
         state["trained_on"] = n
+        state["sizes"] = {f: os.path.getsize(f) for f in files}
         save_json(state_path, state)
         if rc != 0 or not os.path.exists(candidate):
             log("training failed; see loop.log")
@@ -200,6 +227,12 @@ def main():
             state.update(champion_net=champion, champion_version=version, generation=state["generation"] + 1)
             log(f"PROMOTED {version}")
             start_selfplay(args, state)
+            if args.fleet:
+                try:
+                    fleet.set_net(champion, f"gen{state['generation']}", nodes=args.fleet_nodes)
+                    log(f"fleet self-play switched to {os.path.basename(champion)}")
+                except Exception as e:
+                    log(f"could not switch the fleet ({e})")
         save_json(state_path, state)
         if args.once:
             return
