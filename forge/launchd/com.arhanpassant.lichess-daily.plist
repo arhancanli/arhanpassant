@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Collect yesterday's (UTC) Lichess games as training data every day at 04:20 Dubai time (00:20 UTC).
+     Install: cp to ~/Library/LaunchAgents/ and `launchctl load` it. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.arhanpassant.lichess-daily</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/arhancanli/arhanpassant/.venv/bin/python</string>
+    <string>/Users/arhancanli/arhanpassant/forge/lichess_daily.py</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>20</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/arhancanli/arhanpassant-data/lichess/daily.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/arhancanli/arhanpassant-data/lichess/daily.log</string>
+</dict>
+</plist>
