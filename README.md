@@ -6,8 +6,18 @@ the previous version after beating it in a statistical test over thousands of
 games.
 
 **[Play it in your browser](https://arhanpassant.vercel.app/play)** ·
+**[Play it on Lichess](https://lichess.org/@/arhanpassant)** ·
 **[Adaptive puzzle trainer](https://arhanpassant.vercel.app/train)** ·
 **[Promotion ledger](https://arhanpassant.vercel.app/engine)**
+
+## Play it here on GitHub
+
+Everyone plays White, together, against the engine on one shared board. Pick a
+move on the [play page](https://github.com/arhancanli/arhanpassant/blob/play/README.md),
+press **Submit new issue**, and the engine answers on your issue within a few
+minutes.
+
+<p align="center"><a href="https://github.com/arhancanli/arhanpassant/blob/play/README.md"><img src="https://raw.githubusercontent.com/arhancanli/arhanpassant/play/board.svg" width="360" alt="The community game's current position"></a></p>
 
 ## Status
 
