@@ -25,6 +25,8 @@ pub struct MovePicker {
     counter: Move,
     c1: ContKey,
     c2: ContKey,
+    /// 4-ply continuation key (`ContKey::NONE` when the `cont4` setting is off).
+    pub c4: ContKey,
     moves: [Move; MAX_MOVES],
     scores: [i32; MAX_MOVES],
     len: usize,
@@ -47,6 +49,7 @@ impl MovePicker {
             counter,
             c1,
             c2,
+            c4: ContKey::NONE,
             moves: [Move::NULL; MAX_MOVES],
             scores: [0; MAX_MOVES],
             len: 0,
@@ -143,7 +146,7 @@ impl MovePicker {
                             continue;
                         }
                         let piece = pos.moved_piece(m);
-                        let mut score = hist.quiet_score(stm, piece, m, self.c1, self.c2);
+                        let mut score = hist.quiet_score(stm, piece, m, self.c1, self.c2, self.c4);
                         if m == self.killers[0] {
                             score += 1 << 22;
                         } else if m == self.killers[1] {

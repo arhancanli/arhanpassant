@@ -78,4 +78,9 @@ tunables! {
     corr_np: 0, 0, 256;           // eval correction by each side's pieces other than pawns
     corr_cont: 0, 0, 256;         // eval correction by the previous move
     hist_prune: 0, 0, 8000;       // skip quiet moves whose history is below -this x (reduced depth + 1)
+    tt_hist: 0, 0, 1;             // a table cutoff by a quiet move rewards that move's history
+    prior_bonus: 0, 0, 1;         // a node that fails low rewards the opponent's quiet move that led to it
+    eval_hist: 0, 0, 40;          // history of the opponent's quiet move learns from how the eval changed after it
+    lmr_ttcap: 0, 0, 1;           // reduce quiet moves one more ply when the table's move is a capture
+    cont4: 0, 0, 1;               // continuation history also keyed by our own move two turns ago
 }

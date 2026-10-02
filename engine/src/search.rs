@@ -306,6 +306,11 @@ impl Searcher {
         (c1, c2)
     }
 
+    /// Continuation key four plies back, or `ContKey::NONE` when `cont4` is off.
+    fn cont4_key(&self, ply: usize) -> ContKey {
+        if p::cont4() != 0 && ply >= 4 { self.stack[ply - 4].cont } else { ContKey::NONE }
+    }
+
     fn hist_bonus(depth: i32) -> i32 {
         (p::hist_mult() * depth).min(p::hist_max())
     }
@@ -343,6 +348,7 @@ impl Searcher {
             }
         }
 
+        let alpha_orig = alpha;
         let excluded = self.stack[ply].excluded;
         let tt_hit = if excluded.is_null() { self.shared.tt.probe(pos.hash()) } else { None };
         let tt_move = tt_hit.map_or(Move::NULL, |e| e.mv);
@@ -354,6 +360,12 @@ impl Searcher {
                     || (e.bound == BOUND_LOWER && tt_score >= beta)
                     || (e.bound == BOUND_UPPER && tt_score <= alpha))
             {
+                // A quiet move that the table says refutes this node earns history, as a search cutoff would.
+                if p::tt_hist() != 0 && tt_score >= beta && !e.mv.is_null() && e.mv.is_quiet() && pos.is_legal(e.mv) {
+                    let (c1, c2) = self.cont_keys(ply);
+                    let c4 = self.cont4_key(ply);
+                    self.history.update_quiet(pos.side_to_move(), pos.moved_piece(e.mv), e.mv, c1, c2, c4, Self::hist_bonus(depth));
+                }
                 return tt_score;
             }
         }
@@ -385,6 +397,16 @@ impl Searcher {
             }
         }
         self.stack[ply].static_eval = static_eval;
+        // The opponent's quiet move learns from the evaluation swing it caused
+        // (both evaluations are from the mover's side, so their sum is the swing).
+        if p::eval_hist() != 0 && !in_check && excluded.is_null() && ply >= 1 {
+            let prev = self.stack[ply - 1].current;
+            let prev_eval = self.stack[ply - 1].static_eval;
+            if !prev.is_null() && prev.is_quiet() && prev_eval != -INF {
+                let bonus = (-p::eval_hist() * (prev_eval + static_eval)).clamp(-1500, 1500);
+                self.history.update_butterfly(pos.side_to_move().flip(), prev, bonus);
+            }
+        }
         let improving = !in_check && ply >= 2 && static_eval > self.stack[ply - 2].static_eval;
         self.stack[ply + 1].killers = [Move::NULL; 2];
 
@@ -471,8 +493,10 @@ impl Searcher {
         }
 
         let (c1, c2) = self.cont_keys(ply);
+        let c4 = self.cont4_key(ply);
         let counter = if c1.piece != 12 { self.history.counter[c1.piece as usize][c1.to as usize] } else { Move::NULL };
         let mut picker = MovePicker::new(pos, tt_move, self.stack[ply].killers, counter, c1, c2);
+        picker.c4 = c4;
         let mut best_score = -INF;
         let mut best_move = Move::NULL;
         let mut moves_searched = 0usize;
@@ -487,7 +511,7 @@ impl Searcher {
             }
             let is_quiet = m.is_quiet();
             let piece = pos.moved_piece(m);
-            let hist = if is_quiet { self.history.quiet_score(us, piece, m, c1, c2) } else { 0 };
+            let hist = if is_quiet { self.history.quiet_score(us, piece, m, c1, c2, c4) } else { 0 };
             let lmr_base = self.lmr[(depth as usize).min(63)][moves_searched.min(63)];
 
             if !root && best_score > -MATE_IN_MAX {
@@ -566,6 +590,9 @@ impl Searcher {
                     if cut_node {
                         r += 1;
                     }
+                    if p::lmr_ttcap() != 0 && is_quiet && tt_move.is_noisy() {
+                        r += 1;
+                    }
                     if !improving {
                         r += 1;
                     }
@@ -641,10 +668,10 @@ impl Searcher {
             let bonus = Self::hist_bonus(depth);
             let bp = pos.moved_piece(best_move);
             if best_move.is_quiet() {
-                self.history.update_quiet(us, bp, best_move, c1, c2, bonus);
+                self.history.update_quiet(us, bp, best_move, c1, c2, c4, bonus);
                 for &q in &quiets[..n_quiets] {
                     let qp = pos.moved_piece(q);
-                    self.history.update_quiet(us, qp, q, c1, c2, -bonus);
+                    self.history.update_quiet(us, qp, q, c1, c2, c4, -bonus);
                 }
                 let k = &mut self.stack[ply].killers;
                 if k[0] != best_move {
@@ -661,6 +688,17 @@ impl Searcher {
             for &n in &noisies[..n_noisies] {
                 let victim = pos.captured(n).unwrap_or(PieceType::Pawn);
                 self.history.update_capture(pos.moved_piece(n), n.to(), victim, -bonus);
+            }
+        }
+
+        // Failing low here means the opponent's quiet move that led here was good for them.
+        if p::prior_bonus() != 0 && excluded.is_null() && best_score <= alpha_orig && ply >= 1 {
+            let prev = self.stack[ply - 1].current;
+            let pk = self.stack[ply - 1].cont;
+            if !prev.is_null() && prev.is_quiet() && pk.piece != 12 {
+                let (p1, p2) = self.cont_keys(ply - 1);
+                let p4 = self.cont4_key(ply - 1);
+                self.history.update_quiet(us.flip(), Piece(pk.piece), prev, p1, p2, p4, Self::hist_bonus(depth));
             }
         }
 

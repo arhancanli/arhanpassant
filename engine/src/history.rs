@@ -78,17 +78,19 @@ impl History {
         self.cont[key.piece as usize][key.to as usize][piece.idx()][to as usize] as i32
     }
 
-    /// Combined quiet-move score: butterfly + 1-ply and 2-ply continuation.
+    /// Combined quiet-move score: butterfly + 1-, 2- and 4-ply continuation
+    /// (`c4` is `ContKey::NONE` unless the `cont4` setting is on; that row stays zero).
     #[inline(always)]
-    pub fn quiet_score(&self, stm: Color, piece: Piece, m: Move, c1: ContKey, c2: ContKey) -> i32 {
+    pub fn quiet_score(&self, stm: Color, piece: Piece, m: Move, c1: ContKey, c2: ContKey, c4: ContKey) -> i32 {
         self.butterfly[stm.idx()][m.from() as usize][m.to() as usize] as i32
             + self.cont_score(c1, piece, m.to())
             + self.cont_score(c2, piece, m.to())
+            + self.cont_score(c4, piece, m.to())
     }
 
-    pub fn update_quiet(&mut self, stm: Color, piece: Piece, m: Move, c1: ContKey, c2: ContKey, bonus: i32) {
+    pub fn update_quiet(&mut self, stm: Color, piece: Piece, m: Move, c1: ContKey, c2: ContKey, c4: ContKey, bonus: i32) {
         gravity(&mut self.butterfly[stm.idx()][m.from() as usize][m.to() as usize], bonus);
-        for c in [c1, c2] {
+        for c in [c1, c2, c4] {
             if c.piece != 12 {
                 gravity(&mut self.cont[c.piece as usize][c.to as usize][piece.idx()][m.to() as usize], bonus);
             }
@@ -98,6 +100,11 @@ impl History {
     #[inline(always)]
     pub fn capture_score(&self, piece: Piece, to: Square, victim: PieceType) -> i32 {
         self.capture[piece.idx()][to as usize][victim.idx()] as i32
+    }
+
+    /// Butterfly history only, for the opponent's previous move.
+    pub fn update_butterfly(&mut self, stm: Color, m: Move, bonus: i32) {
+        gravity(&mut self.butterfly[stm.idx()][m.from() as usize][m.to() as usize], bonus);
     }
 
     pub fn update_capture(&mut self, piece: Piece, to: Square, victim: PieceType, bonus: i32) {
