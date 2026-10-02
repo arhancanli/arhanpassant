@@ -116,11 +116,6 @@ impl History {
     pub fn correction(&self, stm: Color, key: usize, weight: i32) -> i32 {
         corr_value(self.corr[stm.idx()][key], weight)
     }
-
-    /// Move the correction toward `error` (search result minus raw static eval, cp).
-    pub fn update_correction(&mut self, stm: Color, key: usize, depth: i32, error: i32) {
-        corr_update(&mut self.corr[stm.idx()][key], depth, error);
-    }
 }
 
 /// An entry of a correction table in cp, scaled by `weight` / 128.

@@ -22,4 +22,8 @@ path = "src/main.rs"
 
 [dependencies]
 
+# Syzygy tablebase probing (native builds only; the WebAssembly engine has no tables).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pyrrhic-rs = "0.2"
+
 [dev-dependencies]

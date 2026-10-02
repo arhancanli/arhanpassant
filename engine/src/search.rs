@@ -3,12 +3,13 @@
 //! and reduction heuristics. Several threads share one table (lazy SMP).
 
 use crate::eval;
-use crate::history::{corr_update, corr_value, pawn_key, piece_key, ContKey, History};
+use crate::history::{corr_update, corr_value, pawn_key, piece_key, ContKey, History, CORR_GRAIN};
 use crate::movepick::MovePicker;
 use crate::nnue::{Accumulators, Network};
 use crate::params as p;
 use crate::position::Position;
 use crate::see::{see_ge, see_value};
+use crate::syzygy::{self, Wdl};
 use crate::tt::*;
 use crate::types::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -21,6 +22,9 @@ pub const INF: i32 = 32001;
 pub const MATE: i32 = 32000;
 pub const MATE_IN_MAX: i32 = MATE - MAX_PLY as i32;
 pub const DRAW: i32 = 0;
+/// Tablebase wins sit just below the mate range, shortened by the ply they are found at.
+pub const TB_WIN: i32 = MATE_IN_MAX - 1;
+pub const TB_WIN_IN_MAX: i32 = TB_WIN - MAX_PLY as i32;
 
 /// Soft time limit scale by how many iterations in a row the best move held.
 const STABILITY: [f64; 5] = [2.5, 1.2, 0.9, 0.8, 0.75];
@@ -63,6 +67,9 @@ pub fn score_to_uci(score: i32) -> String {
         format!("mate {}", (MATE - score + 1) / 2)
     } else if score <= -MATE_IN_MAX {
         format!("mate -{}", (MATE + score) / 2)
+    } else if score.abs() >= TB_WIN_IN_MAX {
+        // A tablebase win or loss: shown as a large centipawn score, as other engines do.
+        format!("cp {}", score.signum() * (20000 - (TB_WIN - score.abs())))
     } else {
         format!("cp {score}")
     }
@@ -126,6 +133,10 @@ pub struct Searcher {
     acc: Option<Accumulators>,
     /// Print UCI info lines (main thread of an interactive search).
     pub verbose: bool,
+    /// Root moves the search may play (tablebase filter); empty means all.
+    pub root_allowed: Vec<Move>,
+    /// Positions answered by the tablebases in this search.
+    pub tb_hits: u64,
 }
 
 impl Searcher {
@@ -151,6 +162,8 @@ impl Searcher {
             root_nodes: Box::new([[0; 64]; 64]),
             acc,
             verbose: true,
+            root_allowed: Vec::new(),
+            tb_hits: 0,
         }
     }
 
@@ -177,7 +190,7 @@ impl Searcher {
         // Damp evaluations as the fifty-move counter grows.
         let raw = raw * (200 - pos.halfmove_clock() as i32) / 200;
         let raw = if p::mopup() != 0 { eval::mop_up(pos, raw) } else { raw };
-        raw.clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
+        raw.clamp(-TB_WIN_IN_MAX + 1, TB_WIN_IN_MAX - 1)
     }
 
     /// Keys of the correction tables for a position: pawn structure, each
@@ -215,7 +228,7 @@ impl Searcher {
         if let (true, Some(k)) = (wc != 0, cont) {
             c += corr_value(h.corr_cont[stm.idx()][k], wc);
         }
-        (raw + c).clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
+        (raw + c).clamp(-TB_WIN_IN_MAX + 1, TB_WIN_IN_MAX - 1)
     }
 
     #[inline(always)]
@@ -371,6 +384,35 @@ impl Searcher {
         }
         let tt_pv = PV || tt_hit.is_some_and(|e| e.pv);
 
+        // Tablebase probe, right after a capture or pawn move (the fifty-move
+        // counter is then zero, so the table's verdict is the game's).
+        let mut tb_floor = -INF;
+        let mut tb_cap = INF;
+        if !root && excluded.is_null() && pos.halfmove_clock() == 0 && syzygy::probeable(pos, syzygy::probe_limit()) {
+            if let Some(w) = syzygy::probe_wdl(pos) {
+                self.tb_hits += 1;
+                let (score, bound) = match w {
+                    Wdl::Win => (TB_WIN - ply as i32, BOUND_LOWER),
+                    Wdl::Loss => (-TB_WIN + ply as i32, BOUND_UPPER),
+                    Wdl::CursedWin => (DRAW + 1, BOUND_EXACT),
+                    Wdl::BlessedLoss => (DRAW - 1, BOUND_EXACT),
+                    Wdl::Draw => (DRAW, BOUND_EXACT),
+                };
+                if bound == BOUND_EXACT || (bound == BOUND_LOWER && score >= beta) || (bound == BOUND_UPPER && score <= alpha) {
+                    self.shared.tt.store(pos.hash(), Move::NULL, score_to_tt(score, ply), -INF, (depth + 6).min(MAX_PLY as i32 - 1), bound, tt_pv);
+                    return score;
+                }
+                if PV {
+                    if bound == BOUND_LOWER {
+                        tb_floor = score;
+                        alpha = alpha.max(score);
+                    } else {
+                        tb_cap = score;
+                    }
+                }
+            }
+        }
+
         // Static evaluation: the raw value is what the table keeps, the corrected
         // value is what pruning decisions use.
         let raw_eval;
@@ -381,11 +423,11 @@ impl Searcher {
             static_eval = -INF;
             eval = -INF;
         } else if let Some(e) = tt_hit {
-            raw_eval = if e.eval != -INF && e.eval.abs() < MATE_IN_MAX { e.eval } else { self.evaluate(pos, ply) };
+            raw_eval = if e.eval != -INF && e.eval.abs() < TB_WIN_IN_MAX { e.eval } else { self.evaluate(pos, ply) };
             static_eval = self.corrected(pos, raw_eval, ply);
             eval = static_eval;
             let tt_better = (e.bound == BOUND_LOWER && tt_score > eval) || (e.bound == BOUND_UPPER && tt_score < eval) || e.bound == BOUND_EXACT;
-            if tt_better && tt_score.abs() < MATE_IN_MAX {
+            if tt_better && tt_score.abs() < TB_WIN_IN_MAX {
                 eval = tt_score;
             }
         } else {
@@ -413,7 +455,7 @@ impl Searcher {
         let us = pos.side_to_move();
         if !PV && !in_check && excluded.is_null() {
             // Razoring: far below alpha at low depth, only captures can save it.
-            if p::razor_margin() > 0 && depth <= 4 && alpha.abs() < MATE_IN_MAX && eval + p::razor_margin() * depth <= alpha {
+            if p::razor_margin() > 0 && depth <= 4 && alpha.abs() < TB_WIN_IN_MAX && eval + p::razor_margin() * depth <= alpha {
                 let score = self.qsearch::<false>(pos, alpha, alpha + 1, ply);
                 if self.stopped {
                     return 0;
@@ -423,7 +465,7 @@ impl Searcher {
                 }
             }
             // Reverse futility pruning.
-            if depth <= p::rfp_depth() && eval.abs() < MATE_IN_MAX && eval - p::rfp_margin() * (depth - improving as i32) >= beta {
+            if depth <= p::rfp_depth() && eval.abs() < TB_WIN_IN_MAX && eval - p::rfp_margin() * (depth - improving as i32) >= beta {
                 return (eval + beta) / 2;
             }
             // Null-move pruning.
@@ -433,7 +475,7 @@ impl Searcher {
                 && ply >= 1
                 && !self.stack[ply - 1].current.is_null()
                 && pos.non_pawn_material(us) != 0
-                && beta > -MATE_IN_MAX
+                && beta > -TB_WIN_IN_MAX
             {
                 let r = p::nmp_base() + depth / p::nmp_depth_div() + ((eval - beta) / p::nmp_eval_div()).min(3);
                 let mut child = *pos;
@@ -450,7 +492,7 @@ impl Searcher {
                     return 0;
                 }
                 if score >= beta {
-                    return if score >= MATE_IN_MAX { beta } else { score };
+                    return if score >= TB_WIN_IN_MAX { beta } else { score };
                 }
             }
             // ProbCut: a capture that clears beta by a margin at reduced depth
@@ -458,7 +500,7 @@ impl Searcher {
             let pc_beta = beta + p::probcut_margin();
             if p::probcut_margin() > 0
                 && depth >= 5
-                && beta.abs() < MATE_IN_MAX
+                && beta.abs() < TB_WIN_IN_MAX
                 && !tt_hit.is_some_and(|e| e.depth >= depth - 3 && tt_score < pc_beta)
             {
                 let (c1, c2) = self.cont_keys(ply);
@@ -505,8 +547,12 @@ impl Searcher {
         let mut noisies: [Move; 32] = [Move::NULL; 32];
         let mut n_noisies = 0;
 
+        if tb_floor > -INF {
+            best_score = tb_floor;
+        }
+
         while let Some(m) = picker.next(pos, &self.history) {
-            if m == excluded {
+            if m == excluded || (root && !self.root_allowed.is_empty() && !self.root_allowed.contains(&m)) {
                 continue;
             }
             let is_quiet = m.is_quiet();
@@ -514,7 +560,7 @@ impl Searcher {
             let hist = if is_quiet { self.history.quiet_score(us, piece, m, c1, c2, c4) } else { 0 };
             let lmr_base = self.lmr[(depth as usize).min(63)][moves_searched.min(63)];
 
-            if !root && best_score > -MATE_IN_MAX {
+            if !root && best_score > -TB_WIN_IN_MAX {
                 let lmr_depth = (depth - lmr_base).max(0);
                 if is_quiet {
                     // Late-move pruning.
@@ -544,7 +590,7 @@ impl Searcher {
             let mut ext = 0;
             if !root && m == tt_move && excluded.is_null() && depth >= p::se_depth() {
                 if let Some(e) = tt_hit {
-                    if e.depth >= depth - 3 && e.bound & BOUND_LOWER != 0 && tt_score.abs() < MATE_IN_MAX {
+                    if e.depth >= depth - 3 && e.bound & BOUND_LOWER != 0 && tt_score.abs() < TB_WIN_IN_MAX {
                         let s_beta = tt_score - depth;
                         let s_depth = (depth - 1) / 2;
                         self.stack[ply].excluded = m;
@@ -691,6 +737,10 @@ impl Searcher {
             }
         }
 
+        if PV {
+            best_score = best_score.min(tb_cap);
+        }
+
         // Failing low here means the opponent's quiet move that led here was good for them.
         if p::prior_bonus() != 0 && excluded.is_null() && best_score <= alpha_orig && ply >= 1 {
             let prev = self.stack[ply - 1].current;
@@ -715,21 +765,32 @@ impl Searcher {
             if (p::corr_pawn() != 0 || p::corr_np() != 0 || p::corr_cont() != 0)
                 && !in_check
                 && !best_move.is_noisy()
-                && best_score.abs() < MATE_IN_MAX
+                && best_score.abs() < TB_WIN_IN_MAX
                 && !(bound == BOUND_LOWER && best_score <= static_eval)
                 && !(bound == BOUND_UPPER && best_score >= static_eval)
             {
                 let (pawns, np, cont) = self.corr_keys(pos, ply);
-                let err = best_score - raw_eval;
+                // Each table moves toward the whole error (search minus raw eval), or, with
+                // corr_joint, toward its own value plus what the corrected eval still misses,
+                // so tables that add up do not count the same error twice. With one table on
+                // the two are the same.
+                // (The corrected eval is recomputed: the subtree has moved the tables since entry.)
+                let joint = p::corr_joint() != 0;
+                let residual = if joint { best_score - self.corrected(pos, raw_eval, ply) } else { 0 };
+                let target = |e: i16| if joint { e as i32 / CORR_GRAIN + residual } else { best_score - raw_eval };
                 if p::corr_pawn() != 0 {
-                    self.history.update_correction(us, pawns, depth, err);
+                    let e = &mut self.history.corr[us.idx()][pawns];
+                    corr_update(e, depth, target(*e));
                 }
                 if p::corr_np() != 0 {
-                    corr_update(&mut self.history.corr_np[us.idx() * 2][np[0]], depth, err);
-                    corr_update(&mut self.history.corr_np[us.idx() * 2 + 1][np[1]], depth, err);
+                    for (i, key) in np.iter().enumerate() {
+                        let e = &mut self.history.corr_np[us.idx() * 2 + i][*key];
+                        corr_update(e, depth, target(*e));
+                    }
                 }
                 if let (true, Some(k)) = (p::corr_cont() != 0, cont) {
-                    corr_update(&mut self.history.corr_cont[us.idx()][k], depth, err);
+                    let e = &mut self.history.corr_cont[us.idx()][k];
+                    corr_update(e, depth, target(*e));
                 }
             }
             self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, depth, bound, tt_pv);
@@ -779,13 +840,13 @@ impl Searcher {
             static_eval = -INF;
         } else {
             raw_eval = match tt_hit {
-                Some(e) if e.eval != -INF && e.eval.abs() < MATE_IN_MAX => e.eval,
+                Some(e) if e.eval != -INF && e.eval.abs() < TB_WIN_IN_MAX => e.eval,
                 _ => self.evaluate(pos, ply),
             };
             static_eval = self.corrected(pos, raw_eval, ply);
             best_score = static_eval;
             if let Some(e) = tt_hit {
-                if tt_score.abs() < MATE_IN_MAX
+                if tt_score.abs() < TB_WIN_IN_MAX
                     && ((e.bound == BOUND_LOWER && tt_score > best_score) || (e.bound == BOUND_UPPER && tt_score < best_score))
                 {
                     best_score = tt_score;
@@ -816,7 +877,7 @@ impl Searcher {
                     continue;
                 }
             }
-            if !in_check && best_score > -MATE_IN_MAX && !see_ge(pos, m, p::qs_see()) {
+            if !in_check && best_score > -TB_WIN_IN_MAX && !see_ge(pos, m, p::qs_see()) {
                 continue;
             }
             let child = pos.after(m);
@@ -922,7 +983,7 @@ impl Searcher {
         if legal.is_empty() {
             return result;
         }
-        result.best_move = legal[0];
+        result.best_move = self.root_allowed.first().copied().unwrap_or(legal[0]);
         let max_depth = limits.depth.unwrap_or(MAX_PLY as i32 - 1).clamp(1, MAX_PLY as i32 - 1);
         let mut score = 0;
         for depth in 1..=max_depth {
@@ -1017,9 +1078,9 @@ impl Searcher {
 
 #[inline(always)]
 fn score_to_tt(score: i32, ply: usize) -> i32 {
-    if score >= MATE_IN_MAX {
+    if score >= TB_WIN_IN_MAX {
         score + ply as i32
-    } else if score <= -MATE_IN_MAX {
+    } else if score <= -TB_WIN_IN_MAX {
         score - ply as i32
     } else {
         score
@@ -1030,9 +1091,9 @@ fn score_to_tt(score: i32, ply: usize) -> i32 {
 fn score_from_tt(score: i32, ply: usize) -> i32 {
     if score == -INF {
         -INF
-    } else if score >= MATE_IN_MAX {
+    } else if score >= TB_WIN_IN_MAX {
         score - ply as i32
-    } else if score <= -MATE_IN_MAX {
+    } else if score <= -TB_WIN_IN_MAX {
         score + ply as i32
     } else {
         score
@@ -1052,6 +1113,16 @@ pub fn search_threads(
     shared.stop.store(false, Ordering::Relaxed);
     shared.nodes.store(0, Ordering::Relaxed);
     shared.tt.new_search();
+    // Root tablebase filter, probed once here: the distance-to-zero probe is not thread-safe.
+    let allowed = if syzygy::probeable(root, syzygy::probe_limit()) { syzygy::root_moves(root) } else { None };
+    if let (Some((w, moves)), true) = (&allowed, searchers[0].verbose) {
+        println!("info string tablebase root {w:?}, {} of {} moves kept", moves.len(), root.legal_moves().len());
+    }
+    let allowed = allowed.map(|(_, m)| m).unwrap_or_default();
+    for s in searchers.iter_mut() {
+        s.root_allowed = allowed.clone();
+        s.tb_hits = 0;
+    }
     let (main, helpers) = searchers.split_first_mut().expect("at least one searcher");
     std::thread::scope(|s| {
         for h in helpers.iter_mut() {

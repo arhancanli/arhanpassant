@@ -27,6 +27,7 @@ pub mod position;
 pub mod search;
 pub mod notation;
 pub mod see;
+pub mod syzygy;
 pub mod tt;
 pub mod time;
 pub mod types;

@@ -83,4 +83,5 @@ tunables! {
     eval_hist: 0, 0, 40;          // history of the opponent's quiet move learns from how the eval changed after it
     lmr_ttcap: 0, 0, 1;           // reduce quiet moves one more ply when the table's move is a capture
     cont4: 0, 0, 1;               // continuation history also keyed by our own move two turns ago
+    corr_joint: 0, 0, 1;          // correction tables learn jointly (each toward what the others leave), not each the whole error
 }

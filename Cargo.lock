@@ -5,6 +5,9 @@ version = 4
 [[package]]
 name = "arhanpassant"
 version = "0.7.0"
+dependencies = [
+ "pyrrhic-rs",
+]
 
 [[package]]
 name = "arhanpassant-arena"
@@ -18,4 +21,29 @@ name = "arhanpassant-wasm"
 version = "0.7.0"
 dependencies = [
  "arhanpassant",
+]
+
+[[package]]
+name = "libc"
+version = "0.2.189"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+
+[[package]]
+name = "memmap2"
+version = "0.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "pyrrhic-rs"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3910f053bb86e0d75fb0e61b47d82e456a15c548fb4d8a8da9d9d1a34a4e299"
+dependencies = [
+ "libc",
+ "memmap2",
 ]

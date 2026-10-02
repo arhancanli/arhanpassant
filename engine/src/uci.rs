@@ -123,6 +123,8 @@ impl Uci {
                 println!("option name Move Overhead type spin default 30 min 0 max 5000");
                 println!("option name EvalFile type string default {}", self.eval_file);
                 println!("option name Clear Hash type button");
+                println!("option name SyzygyPath type string default <empty>");
+                println!("option name SyzygyProbeLimit type spin default 7 min 0 max 7");
                 println!("uciok");
             }
             "isready" => println!("readyok"),
@@ -162,6 +164,13 @@ impl Uci {
             "bench" => {
                 let depth = tokens.get(1).and_then(|d| d.parse().ok()).unwrap_or(bench::DEFAULT_DEPTH);
                 bench::run(depth, self.network.clone());
+            }
+            "tb" => {
+                // Tablebase verdict for the current position, and the root moves kept.
+                let wdl = crate::syzygy::probe_wdl(&self.pos);
+                let root = crate::syzygy::root_moves(&self.pos);
+                let moves = root.as_ref().map(|(_, m)| m.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(" "));
+                println!("tb wdl {wdl:?} root {:?} moves {}", root.map(|(w, _)| w), moves.unwrap_or_default());
             }
             "tunables" => {
                 for (name, def, min, max) in params::ALL {
@@ -217,6 +226,16 @@ impl Uci {
                 }
                 self.eval_file = value.to_string();
                 self.rebuild();
+            }
+            "syzygypath" => match crate::syzygy::init(value) {
+                Ok(0) => println!("info string tablebases unloaded"),
+                Ok(n) => println!("info string tablebases loaded, up to {n} pieces"),
+                Err(e) => println!("info string error: tablebases not loaded ({e})"),
+            },
+            "syzygyprobelimit" => {
+                if let Ok(v) = value.parse::<u32>() {
+                    crate::syzygy::set_probe_limit(v);
+                }
             }
             "clear hash" => {
                 if let Some(s) = self.searchers.first() {

@@ -67,6 +67,12 @@ Banksia, En Croissant). Options:
 | `Threads`       | 1            | Search threads                                   |
 | `Move Overhead` | 30           | Milliseconds kept in reserve per move            |
 | `EvalFile`      | `<embedded>` | Network file, or `<none>` for the hand-written evaluation |
+| `SyzygyPath`    | `<empty>`    | Folders of Syzygy tablebase files, separated by `:` |
+| `SyzygyProbeLimit` | 7         | Largest piece count probed during search         |
+
+With tablebases loaded, the engine plays only moves that keep the tables'
+result at the root (the fastest wins, the slowest losses) and scores
+positions the tables cover right after a capture or pawn move.
 
 ## As a library
 
