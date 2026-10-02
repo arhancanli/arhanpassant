@@ -33,7 +33,6 @@ STOCKFISH = os.path.join(DATA, "anchors", "stockfish", "stockfish-macos-universa
 BOOK = os.path.join(ROOT, "tools", "books", "2moves_v1.epd")
 MODES = {"bullet": "60+0", "blitz": "180+2", "rapid": "600+5", "classical": "1800+20"}
 LEVELS = [2800, 3000, 3190]  # 3190 is Stockfish's strongest limited level
-BATCH = 4  # games per batch: two colour-swapped pairs from one opening each
 
 
 def log(msg):
@@ -63,6 +62,7 @@ def main():
     modes = [m for m in args.modes.split(",") if m in MODES]
     played = {m: {lv: {"games": 0, "score": 0.0} for lv in LEVELS} for m in modes}
     deadline = time.time() + args.hours * 3600
+    batch_games = 2 * args.concurrency  # one colour-swapped pair per slot keeps every slot busy
     batch = 0
     while time.time() < deadline:
         todo = [m for m in modes if sum(x["games"] for x in played[m].values()) < args.target]
@@ -77,7 +77,7 @@ def main():
             cmd = ["nice", "-n", "15", ARENA,
                    "--engine", "name=arhanpassant", f"cmd={ENGINE}", f"opt.EvalFile={net}", *[f"opt.{k}={v}" for k, v in accepted.items()],
                    "--engine", f"name=stockfish-{level}", f"cmd={STOCKFISH}", "opt.UCI_LimitStrength=true", f"opt.UCI_Elo={level}",
-                   "--tc", MODES[mode], "--book", BOOK, "--concurrency", str(min(args.concurrency, BATCH)), "--games", str(BATCH),
+                   "--tc", MODES[mode], "--book", BOOK, "--concurrency", str(args.concurrency), "--games", str(batch_games),
                    "--seed", str(int(time.time()) + batch), "--quiet", "--out", out, "--games-out", games_out]
             if subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
                 log(f"{mode} vs {level}: the match failed; stopping")
