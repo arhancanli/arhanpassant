@@ -198,6 +198,88 @@ fn play_game(s: &mut Searcher, rng: &mut Rng, cfg: &Config) -> Option<Vec<[u8; R
     Some(samples.iter().map(|(p, sc)| encode(p, *sc, result)).collect())
 }
 
+/// Turn finished games played elsewhere (Lichess, gauntlets) into training
+/// records. Each line is one game from the standard position:
+/// `<result> <moves...>` with result 1-0, 0-1 or 1/2-1/2 and moves in SAN or
+/// UCI. Every position is scored by a search of `soft_nodes`, and kept on the
+/// same terms as self-play: past the first `skip_plies`, not in check, a quiet
+/// best move, and no mate score. Returns the records, the games used and the
+/// lines that could not be read.
+pub fn rescore(lines: &[String], soft_nodes: u64, threads: usize, hash_mb: usize, network: Option<Arc<Network>>,
+               skip_plies: usize) -> (Vec<[u8; RECORD_SIZE]>, usize, usize) {
+    let threads = threads.max(1);
+    let chunks: Vec<Vec<String>> = (0..threads).map(|t| lines.iter().skip(t).step_by(threads).cloned().collect()).collect();
+    let handles: Vec<_> = chunks
+        .into_iter()
+        .map(|chunk| {
+            let network = network.clone();
+            std::thread::Builder::new()
+                .stack_size(64 << 20)
+                .spawn(move || {
+                    let mut s = Searcher::new(Shared::new(hash_mb, network));
+                    s.verbose = false;
+                    let limits = Limits { soft_nodes: Some(soft_nodes), nodes: Some(soft_nodes * 20), ..Default::default() };
+                    let (mut out, mut used, mut bad) = (Vec::new(), 0usize, 0usize);
+                    for line in &chunk {
+                        let mut words = line.split_whitespace();
+                        let result = match words.next() {
+                            Some("1-0") => 2u8,
+                            Some("0-1") => 0,
+                            Some("1/2-1/2") => 1,
+                            _ => {
+                                bad += 1;
+                                continue;
+                            }
+                        };
+                        let mut pos = Position::startpos();
+                        let mut positions = vec![(pos, vec![pos.hash()])];
+                        let mut ok = true;
+                        for w in words {
+                            let Some(m) = pos.parse_uci_move(w).or_else(|| pos.parse_san(w)) else {
+                                ok = false;
+                                break;
+                            };
+                            pos.play(m);
+                            let mut h = positions.last().unwrap().1.clone();
+                            h.push(pos.hash());
+                            positions.push((pos, h));
+                        }
+                        if !ok {
+                            bad += 1;
+                            continue;
+                        }
+                        used += 1;
+                        s.clear();
+                        s.shared.tt.clear();
+                        for (p, hashes) in positions.iter().skip(skip_plies) {
+                            if p.in_check() || p.legal_moves().is_empty() {
+                                continue;
+                            }
+                            s.shared.tt.new_search();
+                            s.shared.stop.store(false, Ordering::Relaxed);
+                            let r = s.go(p, hashes, &limits, true, 0, &mut |_| {});
+                            if r.best_move.is_null() || !r.best_move.is_quiet() || r.score.abs() >= MATE_IN_MAX {
+                                continue;
+                            }
+                            let white = if p.side_to_move() == Color::White { r.score } else { -r.score };
+                            out.push(encode(p, white.clamp(-32000, 32000) as i16, result));
+                        }
+                    }
+                    (out, used, bad)
+                })
+                .expect("spawn rescore thread")
+        })
+        .collect();
+    let (mut records, mut used, mut bad) = (Vec::new(), 0, 0);
+    for h in handles {
+        let (r, u, b) = h.join().expect("rescore thread");
+        records.extend(r);
+        used += u;
+        bad += b;
+    }
+    (records, used, bad)
+}
+
 /// Generate self-play data until the game or time budget is spent.
 pub fn run(cfg: Config) -> std::io::Result<()> {
     std::fs::create_dir_all(&cfg.out_dir)?;

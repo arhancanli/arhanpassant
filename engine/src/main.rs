@@ -58,6 +58,26 @@ fn main() {
             let fen = args.get(1).map_or("startpos", String::as_str);
             println!("{}", arhanpassant::game::state_json(fen, &args[2.min(args.len())..].join(" ")));
         }
+        Some("rescore") => {
+            // `rescore --in GAMES.txt --out FILE.bin [--nodes N] [--threads T] [--skip PLIES] [--net PATH]`
+            let num = |name: &str, default: u64| flag(&args, name).and_then(|v| v.parse().ok()).unwrap_or(default);
+            let input = flag(&args, "--in").expect("--in GAMES.txt");
+            let output = flag(&args, "--out").expect("--out FILE.bin");
+            let network = match flag(&args, "--net") {
+                Some(path) => Some(Arc::new(Network::load(&path).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(2)
+                }))),
+                None => Network::embedded().map(Arc::new),
+            };
+            let lines: Vec<String> = std::fs::read_to_string(&input).expect("read --in").lines().map(str::to_string).collect();
+            let (records, used, bad) = datagen::rescore(&lines, num("--nodes", 5000), num("--threads", 1) as usize, 16, network, num("--skip", 8) as usize);
+            let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&output).expect("open --out");
+            for r in &records {
+                std::io::Write::write_all(&mut f, r).expect("write --out");
+            }
+            println!("games {used} unreadable {bad} positions {}", records.len());
+        }
         Some("dump") => {
             // Print records of a datagen file: placement, side to move, score, result.
             let path = args.get(1).expect("dump FILE [N]");
