@@ -17,7 +17,9 @@ WORK=/opt/arhanpassant
 E=$WORK/engines
 mkdir -p "$E"
 # Keep a copy: the detached match job calls it to build opponents it is missing.
-[ "$0" != "$E/engines-node.sh" ] && cp "$0" "$E/engines-node.sh" 2>/dev/null
+# run-command prepends "export argN=..." and "set -- <its arguments>" to the
+# script; those lines must not travel with the copy.
+[ "$0" != "$E/engines-node.sh" ] && sed -e '/^export arg[0-9]*=/d' -e '/^set -- /d' "$0" > "$E/engines-node.sh"
 url() { echo "$BASE/$1?$SAS"; }
 put() {
   curl -fsS --retry 5 --retry-delay 10 -X PUT -H "x-ms-blob-type: BlockBlob" \
@@ -61,7 +63,8 @@ build_one() {
     koivisto-9.0)   fetch_bin "$1" https://github.com/Luecx/Koivisto/releases/download/v9.0/Koivisto_9.0-linux-avx2-pgo ;;
     stash-*)        build_tag "$1" mhouppin/stash-bot "v${1#stash-}" src CC=gcc ;;
     weiss-*)        build_tag "$1" TerjeKir/weiss "v${1#weiss-}" src CC=gcc ;;
-    ethereal-1[2-4]*) build_tag "$1" AndyGrant/Ethereal "$( [ "${1#ethereal-}" = 12.75 ] || [ "${1#ethereal-}" = 13.00 ] || [ "${1#ethereal-}" = 14.00 ] && echo v || echo V)${1#ethereal-}" src CC=gcc ;;
+    ethereal-1[3-9]*) echo "Ethereal 13+ needs its network file (make EVALFILE=...); without it the build is the classical evaluation, not the rated engine"; return 1 ;;
+    ethereal-12*)   build_tag "$1" AndyGrant/Ethereal "$( [ "${1#ethereal-}" = 12.75 ] || [ "${1#ethereal-}" = 13.00 ] || [ "${1#ethereal-}" = 14.00 ] && echo v || echo V)${1#ethereal-}" src CC=gcc ;;
     ethereal-*)     build_tag "$1" AndyGrant/Ethereal "V${1#ethereal-}" src CC=gcc ;;
     laser-1.7)      build_tag "$1" jeffreyan11/laser-chess-engine v1.7 src ;;
     demolito-2021)  build_tag "$1" lucasart/Demolito 20211004 src CC=gcc pext ;;

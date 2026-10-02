@@ -3,7 +3,8 @@
     python forge/readme_status.py
 
 Reads forge/ledger.json (promotions), forge/tests.json (search changes) and
-forge/anchors.json (absolute strength), and replaces everything between
+forge/anchors.json (absolute strength), forge/engines.json (matches against
+other engines, when present), and replaces everything between
 "## Status" and the next "## " heading.
 """
 
@@ -53,6 +54,27 @@ def main():
         "[`forge/anchors.json`](forge/anchors.json).",
         "",
     ]
+    engines_path = os.path.join(ROOT, "forge", "engines.json")
+    if os.path.exists(engines_path):
+        # Matches against other open-source engines (forge/engines_report.py), one record per time control.
+        runs = json.load(open(engines_path))["runs"]
+        parts = []
+        for r in runs:
+            lo_e, hi_e = r["ci95"]
+            opponents = sorted({m["opponent"] for m in r["matches"]})
+            parts.append(f"about **{r['estimate']:,}** at {r['tc']} (95% interval {lo_e:,} to {hi_e:,}, "
+                         f"{r['games']:,} games against {len(opponents)} engines)")
+        top = [m for r in runs for m in r["matches"] if m["opponent"] not in r["fit_opponents"]]
+        top_text = "; ".join(f"{m['opponent']} (CCRL {m['ccrl']:,}): {100 * m['score']:.1f}% of {m['games']} games"
+                             for m in sorted(top, key=lambda m: -m["ccrl"]))
+        lines += [
+            "**Against other engines** on the CCRL Blitz scale (2'+1\"): " + "; ".join(parts) + ". Each opponent's "
+            "rating is read from the CCRL list and one rating is fitted to every match the engine scores 20-80% in; "
+            "the interval is from game statistics alone (the opponents' own CCRL ratings carry 10-20 Elo more)."
+            + (f" Too far apart to rate against: {top_text}." if top_text else "")
+            + " Details: [`forge/engines.json`](forge/engines.json).",
+            "",
+        ]
     if "--dry-run" in sys.argv:
         print("\n".join(lines))
         return
