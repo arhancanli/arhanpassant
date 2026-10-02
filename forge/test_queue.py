@@ -5,7 +5,7 @@ that passes (H1) joins them, so later tests build on it. Networks are not
 handled here: the forge loop trains, gates and promotes those, and both share
 the fleet by taking turns (forge/fleet.py waits for a running gate to finish).
 
-    python forge/test_queue.py add NAME "what it changes" opt=value [opt=value ...]
+    python forge/test_queue.py add NAME "what it changes" opt=value [opt=value ...] [bounds=-5,0]
     python forge/test_queue.py run          # keeps running; picks up new items
     python forge/test_queue.py show
 
@@ -46,8 +46,13 @@ def accepted():
 
 
 def add(name, change, opts):
+    """Queue a change. bounds=ELO0,ELO1 overrides the default [0, 5]; [-5, 0] asks
+    "does it at least not lose strength?" for a change whose value lies elsewhere."""
+    item = {"name": name, "change": change, "opts": opts}
+    if "bounds" in opts:
+        item["bounds"] = [float(x) for x in opts.pop("bounds").split(",")]
     q = load(QUEUE, {"pending": [], "done": []})
-    q["pending"].append({"name": name, "change": change, "opts": opts})
+    q["pending"].append(item)
     save(QUEUE, q)
 
 
@@ -64,7 +69,8 @@ def run():
         said_idle = False
         item = q["pending"][0]
         base = accepted()
-        entry = fleet_test.run_test(item["name"], item["change"], {**base, **item["opts"]}, dict(base))
+        elo0, elo1 = item.get("bounds", [0.0, 5.0])
+        entry = fleet_test.run_test(item["name"], item["change"], {**base, **item["opts"]}, dict(base), elo0=elo0, elo1=elo1)
         q = load(QUEUE, {"pending": [], "done": []})  # re-read: items may have been added meanwhile
         q["pending"] = [i for i in q["pending"] if i != item]
         if entry is None:
