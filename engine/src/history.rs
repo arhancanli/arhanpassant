@@ -32,6 +32,10 @@ pub struct History {
     pub counter: [[Move; 64]; 13],
     /// [colour][pawn key]
     pub corr: Vec<[i16; CORR_SIZE]>,
+    /// [side to move * 2 + piece colour][key of that colour's pieces other than pawns]
+    pub corr_np: Vec<[i16; CORR_SIZE]>,
+    /// [colour][previous move: piece * 64 + destination]
+    pub corr_cont: Vec<[i16; 13 * 64]>,
 }
 
 #[inline(always)]
@@ -49,6 +53,8 @@ impl History {
             capture: [[[0; 6]; 64]; 12],
             counter: [[Move::NULL; 64]; 13],
             corr: vec![[0; CORR_SIZE]; 2],
+            corr_np: vec![[0; CORR_SIZE]; 4],
+            corr_cont: vec![[0; 13 * 64]; 2],
         })
     }
 
@@ -59,8 +65,11 @@ impl History {
         }
         self.capture = [[[0; 6]; 64]; 12];
         self.counter = [[Move::NULL; 64]; 13];
-        for c in self.corr.iter_mut() {
+        for c in self.corr.iter_mut().chain(self.corr_np.iter_mut()) {
             *c = [0; CORR_SIZE];
+        }
+        for c in self.corr_cont.iter_mut() {
+            *c = [0; 13 * 64];
         }
     }
 
@@ -98,16 +107,42 @@ impl History {
     /// Correction (in cp) for a static evaluation, scaled by `weight` / 128.
     #[inline(always)]
     pub fn correction(&self, stm: Color, key: usize, weight: i32) -> i32 {
-        self.corr[stm.idx()][key] as i32 * weight / (CORR_GRAIN * 128)
+        corr_value(self.corr[stm.idx()][key], weight)
     }
 
     /// Move the correction toward `error` (search result minus raw static eval, cp).
     pub fn update_correction(&mut self, stm: Color, key: usize, depth: i32, error: i32) {
-        let w = (depth + 1).min(16);
-        let e = &mut self.corr[stm.idx()][key];
-        let target = (error * CORR_GRAIN).clamp(-CORR_MAX, CORR_MAX);
-        *e = ((*e as i32 * (256 - w) + target * w) / 256).clamp(-CORR_MAX, CORR_MAX) as i16;
+        corr_update(&mut self.corr[stm.idx()][key], depth, error);
     }
+}
+
+/// An entry of a correction table in cp, scaled by `weight` / 128.
+#[inline(always)]
+pub fn corr_value(e: i16, weight: i32) -> i32 {
+    e as i32 * weight / (CORR_GRAIN * 128)
+}
+
+/// Move a correction entry toward `error` (cp), faster after deeper searches.
+#[inline(always)]
+pub fn corr_update(e: &mut i16, depth: i32, error: i32) {
+    let w = (depth + 1).min(16);
+    let target = (error * CORR_GRAIN).clamp(-CORR_MAX, CORR_MAX);
+    *e = ((*e as i32 * (256 - w) + target * w) / 256).clamp(-CORR_MAX, CORR_MAX) as i16;
+}
+
+/// Index of one colour's pieces other than pawns (knights, bishops, rooks,
+/// queens and king) in a correction table.
+#[inline(always)]
+pub fn piece_key(pieces: [Bitboard; 5]) -> usize {
+    const MUL: [u64; 5] = [0x9E37_79B9_7F4A_7C15, 0xC2B2_AE3D_27D4_EB4F, 0x1656_67B1_9E37_79F9, 0xD6E8_FEB8_6659_FD93, 0xFF51_AFD7_ED55_8CCD];
+    let mut x = 0u64;
+    for (i, b) in pieces.iter().enumerate() {
+        x ^= b.wrapping_mul(MUL[i]).rotate_left(11 * i as u32);
+    }
+    x ^= x >> 31;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 29;
+    x as usize & (CORR_SIZE - 1)
 }
 
 /// Index of the pawn structure in the correction table.

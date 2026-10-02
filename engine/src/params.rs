@@ -75,4 +75,7 @@ tunables! {
     lmr_deeper: 0, 0, 1;          // re-search deeper or shallower after a reduced search fails high
     probcut_margin: 0, 0, 400;
     mopup: 0, 0, 1;               // drive a bare king to the edge (see eval::mop_up)
+    corr_np: 0, 0, 256;           // eval correction by each side's pieces other than pawns
+    corr_cont: 0, 0, 256;         // eval correction by the previous move
+    hist_prune: 0, 0, 8000;       // skip quiet moves whose history is below -this x (reduced depth + 1)
 }

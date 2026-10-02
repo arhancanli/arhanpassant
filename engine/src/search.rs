@@ -3,7 +3,7 @@
 //! and reduction heuristics. Several threads share one table (lazy SMP).
 
 use crate::eval;
-use crate::history::{pawn_key, ContKey, History};
+use crate::history::{corr_update, corr_value, pawn_key, piece_key, ContKey, History};
 use crate::movepick::MovePicker;
 use crate::nnue::{Accumulators, Network};
 use crate::params as p;
@@ -180,15 +180,42 @@ impl Searcher {
         raw.clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
     }
 
-    /// Static evaluation adjusted by what search has learned about this pawn structure.
+    /// Keys of the correction tables for a position: pawn structure, each
+    /// side's other pieces, and the previous move.
     #[inline(always)]
-    fn corrected(&self, pos: &Position, raw: i32) -> i32 {
-        let w = p::corr_pawn();
-        if w == 0 {
+    fn corr_keys(&self, pos: &Position, ply: usize) -> (usize, [usize; 2], Option<usize>) {
+        let pawns = pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn));
+        let side = |c: Color| {
+            piece_key([PieceType::Knight, PieceType::Bishop, PieceType::Rook, PieceType::Queen, PieceType::King].map(|pt| pos.pieces(c, pt)))
+        };
+        let np = if p::corr_np() != 0 { [side(Color::White), side(Color::Black)] } else { [0, 0] };
+        let prev = if ply >= 1 { self.stack[ply - 1].cont } else { ContKey::NONE };
+        let cont = (prev.piece != 12).then(|| prev.piece as usize * 64 + prev.to as usize);
+        (pawns, np, cont)
+    }
+
+    /// Static evaluation adjusted by what search has learned about similar positions.
+    #[inline(always)]
+    fn corrected(&self, pos: &Position, raw: i32, ply: usize) -> i32 {
+        let (wp, wn, wc) = (p::corr_pawn(), p::corr_np(), p::corr_cont());
+        if wp == 0 && wn == 0 && wc == 0 {
             return raw;
         }
-        let key = pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn));
-        (raw + self.history.correction(pos.side_to_move(), key, w)).clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
+        let stm = pos.side_to_move();
+        let (pawns, np, cont) = self.corr_keys(pos, ply);
+        let h = &self.history;
+        let mut c = 0;
+        if wp != 0 {
+            c += h.correction(stm, pawns, wp);
+        }
+        if wn != 0 {
+            // Each side's table counts half.
+            c += corr_value(h.corr_np[stm.idx() * 2][np[0]], wn) / 2 + corr_value(h.corr_np[stm.idx() * 2 + 1][np[1]], wn) / 2;
+        }
+        if let (true, Some(k)) = (wc != 0, cont) {
+            c += corr_value(h.corr_cont[stm.idx()][k], wc);
+        }
+        (raw + c).clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
     }
 
     #[inline(always)]
@@ -343,7 +370,7 @@ impl Searcher {
             eval = -INF;
         } else if let Some(e) = tt_hit {
             raw_eval = if e.eval != -INF && e.eval.abs() < MATE_IN_MAX { e.eval } else { self.evaluate(pos, ply) };
-            static_eval = self.corrected(pos, raw_eval);
+            static_eval = self.corrected(pos, raw_eval, ply);
             eval = static_eval;
             let tt_better = (e.bound == BOUND_LOWER && tt_score > eval) || (e.bound == BOUND_UPPER && tt_score < eval) || e.bound == BOUND_EXACT;
             if tt_better && tt_score.abs() < MATE_IN_MAX {
@@ -351,7 +378,7 @@ impl Searcher {
             }
         } else {
             raw_eval = self.evaluate(pos, ply);
-            static_eval = self.corrected(pos, raw_eval);
+            static_eval = self.corrected(pos, raw_eval, ply);
             eval = static_eval;
             if excluded.is_null() {
                 self.shared.tt.store(pos.hash(), Move::NULL, -INF, raw_eval, 0, BOUND_NONE, tt_pv);
@@ -475,6 +502,10 @@ impl Searcher {
                     // Futility pruning.
                     if !in_check && lmr_depth <= 8 && static_eval + p::fut_base() + p::fut_mult() * lmr_depth <= alpha {
                         picker.skip_quiets();
+                        continue;
+                    }
+                    // History pruning: a quiet move that keeps failing elsewhere.
+                    if !in_check && p::hist_prune() > 0 && lmr_depth <= 4 && hist < -p::hist_prune() * (lmr_depth + 1) {
                         continue;
                     }
                     if !see_ge(pos, m, -p::see_quiet() * lmr_depth) {
@@ -643,15 +674,25 @@ impl Searcher {
             };
             // Learn how far search landed from the static evaluation, when the
             // result says something about it (not a capture, bound on the right side).
-            if p::corr_pawn() != 0
+            if (p::corr_pawn() != 0 || p::corr_np() != 0 || p::corr_cont() != 0)
                 && !in_check
                 && !best_move.is_noisy()
                 && best_score.abs() < MATE_IN_MAX
                 && !(bound == BOUND_LOWER && best_score <= static_eval)
                 && !(bound == BOUND_UPPER && best_score >= static_eval)
             {
-                let key = pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn));
-                self.history.update_correction(us, key, depth, best_score - raw_eval);
+                let (pawns, np, cont) = self.corr_keys(pos, ply);
+                let err = best_score - raw_eval;
+                if p::corr_pawn() != 0 {
+                    self.history.update_correction(us, pawns, depth, err);
+                }
+                if p::corr_np() != 0 {
+                    corr_update(&mut self.history.corr_np[us.idx() * 2][np[0]], depth, err);
+                    corr_update(&mut self.history.corr_np[us.idx() * 2 + 1][np[1]], depth, err);
+                }
+                if let (true, Some(k)) = (p::corr_cont() != 0, cont) {
+                    corr_update(&mut self.history.corr_cont[us.idx()][k], depth, err);
+                }
             }
             self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, depth, bound, tt_pv);
         }
@@ -703,7 +744,7 @@ impl Searcher {
                 Some(e) if e.eval != -INF && e.eval.abs() < MATE_IN_MAX => e.eval,
                 _ => self.evaluate(pos, ply),
             };
-            static_eval = self.corrected(pos, raw_eval);
+            static_eval = self.corrected(pos, raw_eval, ply);
             best_score = static_eval;
             if let Some(e) = tt_hit {
                 if tt_score.abs() < MATE_IN_MAX
