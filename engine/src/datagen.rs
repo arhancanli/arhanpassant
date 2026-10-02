@@ -199,9 +199,9 @@ fn play_game(s: &mut Searcher, rng: &mut Rng, cfg: &Config) -> Option<Vec<[u8; R
 }
 
 /// Turn finished games played elsewhere (Lichess, gauntlets) into training
-/// records. Each line is one game from the standard position:
-/// `<result> <moves...>` with result 1-0, 0-1 or 1/2-1/2 and moves in SAN or
-/// UCI. Every position is scored by a search of `soft_nodes`, and kept on the
+/// records. Each line is one game: `<result> <moves...>` from the standard
+/// position, or `<result>\t<FEN>\t<moves...>` from any position, with result
+/// 1-0, 0-1 or 1/2-1/2 and moves in SAN or UCI. Every position is scored by a search of `soft_nodes`, and kept on the
 /// same terms as self-play: past the first `skip_plies`, not in check, a quiet
 /// best move, and no mate score. Returns the records, the games used and the
 /// lines that could not be read.
@@ -221,17 +221,28 @@ pub fn rescore(lines: &[String], soft_nodes: u64, threads: usize, hash_mb: usize
                     let limits = Limits { soft_nodes: Some(soft_nodes), nodes: Some(soft_nodes * 20), ..Default::default() };
                     let (mut out, mut used, mut bad) = (Vec::new(), 0usize, 0usize);
                     for line in &chunk {
-                        let mut words = line.split_whitespace();
-                        let result = match words.next() {
-                            Some("1-0") => 2u8,
-                            Some("0-1") => 0,
-                            Some("1/2-1/2") => 1,
+                        let (head, start, body) = match line.split('\t').collect::<Vec<_>>()[..] {
+                            [r, fen, moves] => (r, Some(fen), moves),
+                            _ => line.split_once(' ').map_or((line.as_str(), None, ""), |(r, m)| (r, None, m)),
+                        };
+                        let words = body.split_whitespace();
+                        let result = match head.trim() {
+                            "1-0" => 2u8,
+                            "0-1" => 0,
+                            "1/2-1/2" => 1,
                             _ => {
                                 bad += 1;
                                 continue;
                             }
                         };
-                        let mut pos = Position::startpos();
+                        let mut pos = match start.map(Position::from_fen) {
+                            None => Position::startpos(),
+                            Some(Ok(p)) => p,
+                            Some(Err(_)) => {
+                                bad += 1;
+                                continue;
+                            }
+                        };
                         let mut positions = vec![(pos, vec![pos.hash()])];
                         let mut ok = true;
                         for w in words {
