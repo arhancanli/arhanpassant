@@ -1,0 +1,67 @@
+{
+  "version": "0.7.0",
+  "date": "2026-10-02",
+  "method": "Gauntlet vs Stockfish 19 with UCI_LimitStrength (UCI_Elo calibrated by Stockfish at 120s+1s, anchored to CCRL 40/4); 10+0.1, 2moves_v1 book, 1 thread each, Azure Dasv7 VMs",
+  "anchors": [
+    {
+      "stockfish_uci_elo": 2500,
+      "games": 160,
+      "wins": 152,
+      "losses": 4,
+      "draws": 4,
+      "penta": [
+        0,
+        0,
+        4,
+        4,
+        72
+      ],
+      "elo_diff": 563.8,
+      "estimate": 3064,
+      "estimate_lo": 2967,
+      "estimate_hi": 3276
+    },
+    {
+      "stockfish_uci_elo": 2800,
+      "games": 160,
+      "wins": 115,
+      "losses": 25,
+      "draws": 20,
+      "penta": [
+        3,
+        2,
+        18,
+        16,
+        41
+      ],
+      "elo_diff": 221.1,
+      "estimate": 3021,
+      "estimate_lo": 2966,
+      "estimate_hi": 3088
+    },
+    {
+      "stockfish_uci_elo": 3100,
+      "games": 160,
+      "wins": 40,
+      "losses": 74,
+      "draws": 46,
+      "penta": [
+        19,
+        20,
+        23,
+        12,
+        6
+      ],
+      "elo_diff": -75.0,
+      "estimate": 3025,
+      "estimate_lo": 2975,
+      "estimate_hi": 3072
+    }
+  ],
+  "combined_estimate": 3026,
+  "combined_ci95": [
+    2989,
+    3063
+  ],
+  "caveat": "Statistical interval only. Games were 10+0.1, faster than Stockfish's calibration control, so the absolute level is approximate."
+}
