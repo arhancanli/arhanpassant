@@ -53,13 +53,21 @@ def data_files(data):
     return sorted(glob.glob(os.path.join(data, "selfplay", "**", "*.bin"), recursive=True))
 
 
+def size(f):
+    """Bytes in a data file, or 0 once it is gone (the pull loop deletes the oldest data to free disk)."""
+    try:
+        return os.path.getsize(f)
+    except FileNotFoundError:
+        return 0
+
+
 def positions(files):
-    return sum(os.path.getsize(f) // REC for f in files)
+    return sum(size(f) // REC for f in files)
 
 
 def grown_since(files, sizes):
     """Positions added since `sizes` ({path: bytes}) was recorded; new files count in full."""
-    return sum(max(0, os.path.getsize(f) - sizes.get(f, 0)) // REC for f in files)
+    return sum(max(0, size(f) - sizes.get(f, 0)) // REC for f in files)
 
 
 def hidden_for(n):
@@ -256,7 +264,7 @@ def main():
                   "--hidden", str(hidden), "--epochs", str(epochs), "--input-buckets", str(args.input_buckets),
                   "--output-buckets", str(args.output_buckets), "--out", candidate], logfile)
         state["trained_on"] = n
-        state["sizes"] = {f: os.path.getsize(f) for f in files}
+        state["sizes"] = {f: size(f) for f in files if size(f)}
         save_json(state_path, state)
         if rc != 0 or not os.path.exists(candidate):
             log("training failed; see loop.log")
