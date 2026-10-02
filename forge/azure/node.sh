@@ -47,6 +47,25 @@ build() {
   log "built: $(cat bench.txt)"
 }
 
+# The opening book and the match runner, for gates and tuning.
+game_tools() {
+  if [ ! -f book.epd ]; then
+    curl -fsSL -o book.zip https://github.com/official-stockfish/books/raw/master/UHO_4060_v4.epd.zip || return 1
+    python3 -c "import zipfile; z = zipfile.ZipFile('book.zip'); open('book.epd', 'wb').write(z.read(z.namelist()[0]))" || return 1
+  fi
+  if [ ! -x src/target/release/arena ]; then
+    (cd src && cargo build --release -p arhanpassant-arena >> "$LOG" 2>&1) || return 1
+  fi
+}
+
+# True when this build knows every setting given as NAME=VALUE arguments (an
+# unknown one would be ignored and two "different" engines would be the same).
+knows_settings() {
+  local kv
+  ! { for kv in "$@"; do printf 'setoption name %s value %s\n' "${kv%%=*}" "${kv#*=}"; done; echo quit; } |
+    ./arhanpassant 2>&1 | grep -q "unknown option"
+}
+
 # Play one batch of a running distributed gate (control/gate.json) and upload
 # its result; returns non-zero when no gate is running or the batch failed.
 gate_batch() {
@@ -70,12 +89,10 @@ PY
   local cand_args=() champ_args=()
   mapfile -t cand_args < cand.args
   mapfile -t champ_args < champ.args
-  # Play only if this build knows every setting under test (an unknown one
-  # would be ignored and the two sides would silently be the same engine).
-  local a kv
-  if { for a in ${cand_args[@]+"${cand_args[@]}"} ${champ_args[@]+"${champ_args[@]}"}; do
-         kv=${a#opt.}; printf 'setoption name %s value %s\n' "${kv%%=*}" "${kv#*=}"
-       done; echo quit; } | ./arhanpassant 2>&1 | grep -q "unknown option"; then
+  # Play only if this build knows every setting under test.
+  local a settings=()
+  for a in ${cand_args[@]+"${cand_args[@]}"} ${champ_args[@]+"${champ_args[@]}"}; do settings+=("${a#opt.}"); done
+  if ! knows_settings ${settings[@]+"${settings[@]}"}; then
     log "gate $gid: this build ($(cat built-from 2>/dev/null)) lacks a setting it tests; skipping"
     return 1
   fi
@@ -92,13 +109,7 @@ PY
       return 1
     fi
   done
-  if [ ! -f book.epd ]; then
-    curl -fsSL -o book.zip https://github.com/official-stockfish/books/raw/master/UHO_4060_v4.epd.zip || return 1
-    python3 -c "import zipfile; z = zipfile.ZipFile('book.zip'); open('book.epd', 'wb').write(z.read(z.namelist()[0]))" || return 1
-  fi
-  if [ ! -x src/target/release/arena ]; then
-    (cd src && cargo build --release -p arhanpassant-arena >> "$LOG" 2>&1) || return 1
-  fi
+  game_tools || return 1
   local conc=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))
   local seed
   seed=$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')
@@ -109,6 +120,30 @@ PY
     --tc "$gtc" --book book.epd --concurrency "$conc" --games $((2 * pairs)) --seed "$seed" \
     --quiet --out gate-batch.json >> "$LOG" 2>&1 || return 1
   put "gates/$gid/$HOST-$(date -u +%Y%m%dT%H%M%S).json" gate-batch.json || return 1
+  return 0
+}
+
+# Play one batch of SPSA tuning pairs (control/spsa.json, forge/spsa.py) and
+# upload the results; non-zero when no run is active or this node sits it out.
+spsa_batch() {
+  fetch control/spsa.json spsa.json 2>/dev/null || return 1
+  local fields
+  fields=$(python3 -c "import json; s = json.load(open('spsa.json')); print(s['status'], s['id'], s['net'])" 2>/dev/null) || return 1
+  read -r status sid snet <<< "$fields"
+  [ "$status" = "running" ] || return 1
+  [ -f src/forge/azure/spsa_batch.py ] || return 1
+  python3 src/forge/azure/spsa_batch.py spsa.json "$HOST" --check 2>/dev/null || return 1
+  local settings=()
+  mapfile -t settings < <(python3 -c "import json; s = json.load(open('spsa.json'))
+for k, v in (s.get('fixed') or {}).items(): print(f'{k}={v}')
+for p in s['params']: print(f\"{p['name']}={p['min']}\")")
+  knows_settings ${settings[@]+"${settings[@]}"} || { log "spsa $sid: this build lacks a setting; skipping"; return 1; }
+  mkdir -p nets
+  [ -f "nets/$(basename "$snet")" ] || fetch "$snet" "nets/$(basename "$snet")" || return 1
+  game_tools || return 1
+  python3 src/forge/azure/spsa_batch.py spsa.json "$HOST" spsa-out.json >> "$LOG" 2>&1 || return 1
+  put "spsa/$sid/$HOST-$(date -u +%Y%m%dT%H%M%S)-$RANDOM.json" spsa-out.json || return 1
+  log "spsa $sid: batch uploaded"
   return 0
 }
 
@@ -135,8 +170,11 @@ while true; do
   if [ ! -x ./arhanpassant ] || [ "$(cat built-from 2>/dev/null)" != "$SRC" ]; then
     build "$SRC" || { log "build failed"; sleep 120; continue; }
   fi
-  # A running gate takes priority over self-play.
+  # A running gate takes priority over tuning, and tuning over self-play.
   if gate_batch; then
+    continue
+  fi
+  if spsa_batch; then
     continue
   fi
   NETARG=()
