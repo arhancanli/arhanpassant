@@ -176,6 +176,7 @@ impl Searcher {
         };
         // Damp evaluations as the fifty-move counter grows.
         let raw = raw * (200 - pos.halfmove_clock() as i32) / 200;
+        let raw = if p::mopup() != 0 { eval::mop_up(pos, raw) } else { raw };
         raw.clamp(-MATE_IN_MAX + 1, MATE_IN_MAX - 1)
     }
 

@@ -194,9 +194,66 @@ pub fn evaluate(pos: &Position) -> i32 {
     score + TEMPO
 }
 
+const LIGHT_SQUARES: Bitboard = 0x55AA_55AA_55AA_55AA;
+
+fn king_distance(a: Square, b: Square) -> i32 {
+    (file_of(a) as i32 - file_of(b) as i32).abs().max((rank_of(a) as i32 - rank_of(b) as i32).abs())
+}
+
+/// Bare king against material that can force mate: a score that drives the
+/// lone king to the edge (with bishop and knight, to a corner of the bishop's
+/// colour) and brings the other king closer, so search finds the mate instead
+/// of drifting into the fifty-move rule. Returns `eval` (side to move's view)
+/// unchanged in every other position.
+pub fn mop_up(pos: &Position, eval: i32) -> i32 {
+    for winner in [Color::White, Color::Black] {
+        let loser = winner.flip();
+        let lone = pos.king_sq(loser);
+        if pos.color_bb(loser) != 1u64 << lone {
+            continue;
+        }
+        if pos.pieces(winner, PieceType::Pawn) != 0 {
+            return eval;
+        }
+        let heavy = pos.pieces(winner, PieceType::Queen) | pos.pieces(winner, PieceType::Rook) != 0;
+        let bishops = pos.pieces(winner, PieceType::Bishop);
+        let knights = pos.pieces(winner, PieceType::Knight).count_ones();
+        let both_colours = bishops & LIGHT_SQUARES != 0 && bishops & !LIGHT_SQUARES != 0;
+        if !(heavy || both_colours || (bishops != 0 && knights > 0) || knights >= 3) {
+            return eval;
+        }
+        let (f, r) = (file_of(lone) as i32, rank_of(lone) as i32);
+        let from_centre = (3 - f).max(f - 4) + (3 - r).max(r - 4);
+        let mut score = 2000 + 40 * from_centre + 20 * (7 - king_distance(lone, pos.king_sq(winner)));
+        if !heavy && !both_colours && knights > 0 {
+            // Bishop and knight mate only in a corner of the bishop's colour.
+            let corners: [Square; 2] = if bishops & LIGHT_SQUARES != 0 { [7, 56] } else { [0, 63] };
+            let d = corners.iter().map(|&c| king_distance(lone, c)).min().unwrap_or(7);
+            score += 60 * (7 - d);
+        }
+        return if pos.side_to_move() == winner { score } else { -score };
+    }
+    eval
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mop_up_only_for_a_bare_king_against_mating_material() {
+        let at = |fen: &str| mop_up(&Position::from_fen(fen).unwrap(), 7);
+        assert!(at("8/8/8/4k3/8/8/8/R3K3 w - - 0 1") > 2000, "KRK, winner to move");
+        assert!(at("8/8/8/4k3/8/8/8/R3K3 b - - 0 1") < -2000, "KRK, loser to move");
+        assert!(at("4k3/8/8/8/8/8/8/R3K3 w - - 0 1") > at("8/8/8/4k3/8/8/8/R3K3 w - - 0 1"), "edge beats centre");
+        // KBNK with a light-squared bishop (f1): a8 is a mating corner, h8 is not.
+        assert!(at("k7/8/8/8/8/8/8/1N2KB2 w - - 0 1") > at("7k/8/8/8/8/8/8/1N2KB2 w - - 0 1"), "KBNK corner");
+        assert_eq!(at("8/8/8/4k3/8/8/8/1N2K1N1 w - - 0 1"), 7, "two knights cannot force mate");
+        assert!(at("8/8/8/4k3/8/8/8/2B1KB2 w - - 0 1") > 2000, "two bishops on both colours can");
+        assert_eq!(at("8/8/3k4/8/8/8/8/1B2KB2 w - - 0 1"), 7, "same-coloured bishops cannot");
+        assert_eq!(at("8/8/8/4k3/8/8/4P3/R3K3 w - - 0 1"), 7, "pawns: left to the network");
+        assert_eq!(at("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"), 7);
+    }
 
     #[test]
     fn symmetric() {

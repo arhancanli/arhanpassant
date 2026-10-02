@@ -74,4 +74,5 @@ tunables! {
     qs_fut_margin: 0, 0, 400;
     lmr_deeper: 0, 0, 1;          // re-search deeper or shallower after a reduced search fails high
     probcut_margin: 0, 0, 400;
+    mopup: 0, 0, 1;               // drive a bare king to the edge (see eval::mop_up)
 }

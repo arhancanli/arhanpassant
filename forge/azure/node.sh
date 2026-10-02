@@ -52,14 +52,9 @@ build() {
 gate_batch() {
   fetch control/gate.json gate.json 2>/dev/null || return 1
   local fields
-  fields=$(python3 -c "import json; g = json.load(open('gate.json')); print(g.get('status', ''), g['id'], g['candidate'], g['champion'], g['tc'], g.get('pairs', 16), g.get('src') or '-')" 2>/dev/null) || return 1
-  read -r status gid cand champ gtc pairs gsrc <<< "$fields"
+  fields=$(python3 -c "import json; g = json.load(open('gate.json')); print(g.get('status', ''), g['id'], g['candidate'], g['champion'], g['tc'], g.get('pairs', 16))" 2>/dev/null) || return 1
+  read -r status gid cand champ gtc pairs <<< "$fields"
   [ "$status" = "running" ] || return 1
-  # A gate that tests an engine change names the build it needs.
-  if [ "$gsrc" != "-" ] && [ "$(cat built-from 2>/dev/null)" != "$gsrc" ]; then
-    log "gate $gid needs $gsrc; this node has $(cat built-from 2>/dev/null); skipping"
-    return 1
-  fi
   # Per-side UCI options (search settings under test), one opt.NAME=VALUE per line.
   python3 - <<'PY' || { log "gate $gid: unreadable options"; return 1; }
 import json, re
@@ -75,6 +70,15 @@ PY
   local cand_args=() champ_args=()
   mapfile -t cand_args < cand.args
   mapfile -t champ_args < champ.args
+  # Play only if this build knows every setting under test (an unknown one
+  # would be ignored and the two sides would silently be the same engine).
+  local a kv
+  if { for a in ${cand_args[@]+"${cand_args[@]}"} ${champ_args[@]+"${champ_args[@]}"}; do
+         kv=${a#opt.}; printf 'setoption name %s value %s\n' "${kv%%=*}" "${kv#*=}"
+       done; echo quit; } | ./arhanpassant 2>&1 | grep -q "unknown option"; then
+    log "gate $gid: this build ($(cat built-from 2>/dev/null)) lacks a setting it tests; skipping"
+    return 1
+  fi
   mkdir -p nets
   for n in "$cand" "$champ"; do
     [ -f "nets/$(basename "$n")" ] || fetch "$n" "nets/$(basename "$n")" || return 1
