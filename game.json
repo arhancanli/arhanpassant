@@ -1,0 +1,13 @@
+{
+ "game": 1,
+ "moves": [],
+ "players": [],
+ "record": {
+  "engine": 0,
+  "community": 0,
+  "draw": 0
+ },
+ "movers": {},
+ "games": [],
+ "last": null
+}
