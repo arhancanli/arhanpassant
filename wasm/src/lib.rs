@@ -13,6 +13,7 @@
 //! - `newgame`: clear the hash table and history
 //! - `version`
 
+use arhanpassant::game::{json_error as error, json_list as list, json_str as esc, replay, state_json as state};
 use arhanpassant::nnue::Network;
 use arhanpassant::search::{Limits, Searcher, Shared, MATE_IN_MAX};
 use arhanpassant::{Move, Position};
@@ -60,91 +61,6 @@ pub unsafe extern "C" fn ap_call(ptr: *const u8, len: usize) -> usize {
 #[no_mangle]
 pub extern "C" fn ap_out_ptr() -> *const u8 {
     OUT.with(|o| o.borrow().as_ptr())
-}
-
-fn esc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            c if (c as u32) < 0x20 => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-fn error(msg: &str) -> String {
-    format!("{{\"error\":{}}}", esc(msg))
-}
-
-fn list(items: impl Iterator<Item = String>) -> String {
-    format!("[{}]", items.collect::<Vec<_>>().join(","))
-}
-
-/// Replay `moves` from `fen`; returns the final position, game hashes and SAN history.
-fn replay(fen: &str, moves: &str) -> Result<(Position, Vec<u64>, Vec<String>), String> {
-    let mut pos = if fen == "startpos" || fen.is_empty() {
-        Position::startpos()
-    } else {
-        Position::from_fen(fen).map_err(|e| e.to_string())?
-    };
-    let mut hashes = vec![pos.hash()];
-    let mut sans = Vec::new();
-    for u in moves.split_whitespace() {
-        let m = pos.parse_uci_move(u).ok_or_else(|| format!("illegal move {u}"))?;
-        sans.push(pos.san(m));
-        pos.play(m);
-        hashes.push(pos.hash());
-    }
-    Ok((pos, hashes, sans))
-}
-
-fn threefold(hashes: &[u64], halfmove: usize) -> bool {
-    let n = hashes.len();
-    let mut count = 1;
-    let mut i = 4;
-    while i <= halfmove.min(n - 1) {
-        if hashes[n - 1 - i] == hashes[n - 1] {
-            count += 1;
-        }
-        i += 2;
-    }
-    count >= 3
-}
-
-fn state(fen: &str, moves: &str) -> String {
-    let (pos, hashes, sans) = match replay(fen, moves) {
-        Ok(r) => r,
-        Err(e) => return error(&e),
-    };
-    let legal = pos.legal_moves();
-    let draw = if legal.is_empty() {
-        None
-    } else if pos.halfmove_clock() >= 100 {
-        Some("fifty-move rule")
-    } else if pos.is_insufficient_material() {
-        Some("insufficient material")
-    } else if threefold(&hashes, pos.halfmove_clock() as usize) {
-        Some("threefold repetition")
-    } else {
-        None
-    };
-    format!(
-        "{{\"fen\":{},\"turn\":\"{}\",\"check\":{},\"checkmate\":{},\"stalemate\":{},\"draw\":{},\"legal\":{},\"history\":{}}}",
-        esc(&pos.fen()),
-        if pos.side_to_move() == arhanpassant::Color::White { "w" } else { "b" },
-        pos.in_check(),
-        legal.is_empty() && pos.in_check(),
-        legal.is_empty() && !pos.in_check(),
-        draw.map_or("null".to_string(), esc),
-        list(legal.iter().map(|m| format!("[{},{}]", esc(&m.to_uci()), esc(&pos.san(m))))),
-        list(sans.iter().map(|s| esc(s)))
-    )
 }
 
 fn with_engine<R>(f: impl FnOnce(&mut Searcher) -> R) -> R {

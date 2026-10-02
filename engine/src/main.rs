@@ -53,6 +53,11 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Some("state") => {
+            // `state <fen|startpos> [uci moves...]`: the position as JSON (legal moves with SAN, status).
+            let fen = args.get(1).map_or("startpos", String::as_str);
+            println!("{}", arhanpassant::game::state_json(fen, &args[2.min(args.len())..].join(" ")));
+        }
         Some("dump") => {
             // Print records of a datagen file: placement, side to move, score, result.
             let path = args.get(1).expect("dump FILE [N]");

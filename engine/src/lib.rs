@@ -17,6 +17,7 @@ pub mod bench;
 pub mod bitboard;
 pub mod datagen;
 pub mod eval;
+pub mod game;
 pub mod history;
 pub mod movegen;
 pub mod movepick;

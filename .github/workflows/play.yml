@@ -1,0 +1,45 @@
+name: Community game
+
+# Everyone plays White against the engine on one board. An issue titled
+# "play: <move>" is a move; play/play.py answers every open one, redraws the
+# board on the `play` branch and replies on the issue.
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: community-game
+  cancel-in-progress: false
+
+jobs:
+  play:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.issue.title, 'play:')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the engine
+        run: cargo build --release -p arhanpassant
+      - name: Check out the game
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch -q origin play; then
+            git worktree add -q -B play game FETCH_HEAD
+          else
+            git worktree add -q --detach game
+            git -C game checkout -q --orphan play
+            git -C game rm -rfq .
+          fi
+      - name: Answer every waiting move
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 play/play.py --engine target/release/arhanpassant --game game --repo "$GITHUB_REPOSITORY"
