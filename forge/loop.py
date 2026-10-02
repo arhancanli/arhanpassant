@@ -107,32 +107,78 @@ def start_selfplay(args, state):
     log(f"self-play generation {gen} running (pid {p.pid}) with {state.get('champion_net') or 'hand-written evaluation'}")
 
 
+def search_settings(args):
+    """Search settings accepted by the fleet's test queue (forge/test_queue.py); both sides of a gate use them."""
+    return load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}})["accepted"]
+
+
 def gate(args, candidate, state, logfile):
     out = os.path.join(args.data, "forge", f"sprt-{os.path.basename(candidate)}.json")
+    opts = search_settings(args)
     if args.fleet and state.get("champion_net"):
         try:
             alive = fleet.nodes_alive()
             if alive >= args.fleet_min_nodes:
                 log(f"gate on the fleet ({alive} nodes reporting)")
                 r = fleet.remote_gate(candidate, state["champion_net"], tc=args.tc, elo0=args.elo0, elo1=args.elo1,
-                                      max_games=args.max_games, log=log)
+                                      max_games=args.max_games, log=log, cand_opts=opts, champ_opts=opts,
+                                      src=fleet.current_src(), name=f"network {os.path.basename(candidate)}")
                 if r:
                     save_json(out, r)
                     return r
             log(f"fleet unavailable ({alive} nodes reporting); gating locally")
         except Exception as e:  # network trouble: fall back to the local gate
             log(f"fleet gate error ({e}); gating locally")
-    champ = ["--engine", "name=champion", f"cmd={args.engine}"]
+    settings = [f"opt.{k}={v}" for k, v in opts.items()]
+    champ = ["--engine", "name=champion", f"cmd={args.engine}", *settings]
     if state.get("champion_net"):
         champ.append(f"opt.EvalFile={state['champion_net']}")
     else:
         champ.append("opt.EvalFile=<none>")
-    cmd = [args.arena, "--engine", "name=candidate", f"cmd={args.engine}", f"opt.EvalFile={candidate}", *champ,
+    cmd = [args.arena, "--engine", "name=candidate", f"cmd={args.engine}", f"opt.EvalFile={candidate}", *settings, *champ,
            "--tc", args.tc, "--book", args.book, "--concurrency", str(args.concurrency), "--games", str(args.max_games),
            "--sprt", f"{args.elo0},{args.elo1}", "--nice", "10", "--seed", str(int(time.time())), "--quiet", "--out", out]
     if run(cmd, logfile) != 0:
         return None
     return load_json(out, None)
+
+
+def promote_if_passed(args, state, candidate, result, change):
+    """Log a gate's result; when it passed, make the candidate the champion everywhere."""
+    if not result:
+        log("gate failed to run; see loop.log")
+        time.sleep(600)
+        return
+    log(f"gate result {result['decision']}: {result['games']} games, elo {result['elo']:+.1f} [{result['elo_lo']:+.1f}, {result['elo_hi']:+.1f}], llr {result['sprt']['llr']:.2f}")
+    if result["decision"] != "H1":
+        return
+    major, minor, _ = (int(x) for x in state["champion_version"].split("."))
+    version = f"{major}.{minor + 1}.0"
+    champion = os.path.join(args.data, "nets", f"champion-{version}.nnue")
+    shutil.copy(candidate, champion)
+    ledger = load_json(LEDGER, {"versions": []})
+    ledger["versions"].append({
+        "version": version,
+        "date": dt.date.today().isoformat(),
+        "change": change,
+        "status": "promoted",
+        "games": result["games"],
+        "elo": round(result["elo"], 1),
+        "eloLo": round(result["elo_lo"], 1),
+        "eloHi": round(result["elo_hi"], 1),
+        "llr": round(result["sprt"]["llr"], 2),
+        "net": os.path.basename(champion),
+    })
+    save_json(LEDGER, ledger)
+    state.update(champion_net=champion, champion_version=version, generation=state["generation"] + 1)
+    log(f"PROMOTED {version}")
+    start_selfplay(args, state)
+    if args.fleet:
+        try:
+            fleet.set_net(champion, f"gen{state['generation']}", nodes=args.fleet_nodes)
+            log(f"fleet self-play switched to {os.path.basename(champion)}")
+        except Exception as e:
+            log(f"could not switch the fleet ({e})")
 
 
 def main():
@@ -156,6 +202,8 @@ def main():
     ap.add_argument("--input-buckets", type=int, default=8, help="king buckets for new networks (1 or 8)")
     ap.add_argument("--output-buckets", type=int, default=8, help="piece-count output heads for new networks")
     ap.add_argument("--once", action="store_true", help="run a single round and exit")
+    ap.add_argument("--gate-first", help="a network already trained: gate it before training anything")
+    ap.add_argument("--gate-first-change", help="ledger description of --gate-first's network")
     args = ap.parse_args()
 
     forge_dir = os.path.join(args.data, "forge")
@@ -168,9 +216,18 @@ def main():
         start_selfplay(args, state)
         save_json(state_path, state)
 
+    first = args.gate_first
     while True:
         files = data_files(args.data)
         n = positions(files)
+        if first:
+            candidate, change, first = first, args.gate_first_change or "NNUE network", None
+            state["attempts"] += 1
+            log(f"round {state['attempts']}: gating {os.path.basename(candidate)}, trained before the loop started")
+            result = gate(args, candidate, state, logfile)
+            promote_if_passed(args, state, candidate, result, change)
+            save_json(state_path, state)
+            continue
         # New data = growth since the last training round, so deleting old
         # generations never looks like lost data and growing files count once.
         fresh = grown_since(files, state["sizes"]) if "sizes" in state else n - state["trained_on"]
@@ -183,6 +240,8 @@ def main():
 
         state["attempts"] += 1
         hidden = hidden_for(n)
+        shape = f" ({args.input_buckets} king buckets, {args.output_buckets} output buckets)" if args.input_buckets * args.output_buckets > 1 else ""
+        change = f"NNUE network{shape}, {hidden} hidden units, trained on {n / 1e6:.1f}M self-play positions"
         stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
         layout = f"-{args.input_buckets}x{args.output_buckets}" if args.input_buckets * args.output_buckets > 1 else ""
         candidate = os.path.join(args.data, "nets", f"cand-{stamp}-h{hidden}{layout}.nnue")
@@ -203,40 +262,7 @@ def main():
 
         log(f"gate: {os.path.basename(candidate)} vs champion {state['champion_version']}")
         result = gate(args, candidate, state, logfile)
-        if not result:
-            log("gate failed to run; see loop.log")
-            time.sleep(600)
-            continue
-        log(f"gate result {result['decision']}: {result['games']} games, elo {result['elo']:+.1f} [{result['elo_lo']:+.1f}, {result['elo_hi']:+.1f}], llr {result['sprt']['llr']:.2f}")
-
-        if result["decision"] == "H1":
-            major, minor, _ = (int(x) for x in state["champion_version"].split("."))
-            version = f"{major}.{minor + 1}.0"
-            champion = os.path.join(args.data, "nets", f"champion-{version}.nnue")
-            shutil.copy(candidate, champion)
-            ledger = load_json(LEDGER, {"versions": []})
-            ledger["versions"].append({
-                "version": version,
-                "date": dt.date.today().isoformat(),
-                "change": f"NNUE network, {hidden} hidden units, trained on {n / 1e6:.1f}M self-play positions",
-                "status": "promoted",
-                "games": result["games"],
-                "elo": round(result["elo"], 1),
-                "eloLo": round(result["elo_lo"], 1),
-                "eloHi": round(result["elo_hi"], 1),
-                "llr": round(result["sprt"]["llr"], 2),
-                "net": os.path.basename(champion),
-            })
-            save_json(LEDGER, ledger)
-            state.update(champion_net=champion, champion_version=version, generation=state["generation"] + 1)
-            log(f"PROMOTED {version}")
-            start_selfplay(args, state)
-            if args.fleet:
-                try:
-                    fleet.set_net(champion, f"gen{state['generation']}", nodes=args.fleet_nodes)
-                    log(f"fleet self-play switched to {os.path.basename(champion)}")
-                except Exception as e:
-                    log(f"could not switch the fleet ({e})")
+        promote_if_passed(args, state, candidate, result, change)
         save_json(state_path, state)
         if args.once:
             return

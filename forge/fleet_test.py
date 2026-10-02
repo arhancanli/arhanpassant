@@ -33,6 +33,46 @@ def log(msg):
     print(f"{dt.datetime.now(dt.timezone.utc):%Y-%m-%dT%H:%M:%SZ} {msg}", flush=True)
 
 
+def run_test(name, change, cand, champ, net=None, src=None, tc="8+0.08", elo0=0.0, elo1=5.0, max_games=12000,
+             candidate_net=None):
+    """Run one fleet test and record it; returns the ledger entry, or None if the fleet stalled.
+
+    cand / champ are UCI options for each side. Both sides use `net` (default:
+    the champion) unless candidate_net gives the candidate its own network.
+    """
+    state = json.load(open(os.path.join(DATA, "forge", "state.json")))
+    net = os.path.expanduser(net or state["champion_net"])
+    cnet = os.path.expanduser(candidate_net or net)
+    src = src or fleet.current_src()
+    if fleet.read_control().get("SRC") != src:
+        fleet.write_control(SRC=src)
+        log(f"fleet switched to {src}; nodes rebuild at their next chunk boundary")
+    log(f"test {name}: {cand or 'defaults'} vs {champ or 'defaults'}, "
+        f"{os.path.basename(cnet)} vs {os.path.basename(net)}, {src}, {tc}")
+    r = fleet.remote_gate(cnet, net, tc=tc, elo0=elo0, elo1=elo1, max_games=max_games,
+                          cand_opts=cand, champ_opts=champ, src=src, name=name, log=log)
+    if r is None:
+        log(f"test {name}: the fleet stalled; no result")
+        return None
+    os.makedirs(os.path.join(DATA, "forge", "tests"), exist_ok=True)
+    json.dump(r, open(os.path.join(DATA, "forge", "tests", f"{r['id']}-{name}.json"), "w"), indent=2)
+    entry = {
+        "date": r["id"][:8], "name": name, "change": change, "candidate": cand, "baseline": champ,
+        "network": os.path.basename(net), "build": src, "tc": tc, "bounds": [elo0, elo1],
+        "games": r["games"], "elo": round(r["elo"], 1), "eloLo": round(r["elo_lo"], 1), "eloHi": round(r["elo_hi"], 1),
+        "llr": round(r["sprt"]["llr"], 2), "decision": r["decision"],
+    }
+    if candidate_net:
+        entry["candidateNetwork"] = os.path.basename(cnet)
+    ledger = json.load(open(LEDGER)) if os.path.exists(LEDGER) else {"tests": []}
+    ledger["tests"].append(entry)
+    with open(LEDGER, "w") as f:
+        json.dump(ledger, f, indent=2)
+        f.write("\n")
+    log(f"test {name}: {r['decision']} after {r['games']} games, elo {r['elo']:+.1f} [{r['elo_lo']:+.1f}, {r['elo_hi']:+.1f}]")
+    return entry
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", required=True)
@@ -46,34 +86,9 @@ def main():
     ap.add_argument("--elo1", type=float, default=5.0)
     ap.add_argument("--max-games", type=int, default=12000)
     args = ap.parse_args()
-
-    state = json.load(open(os.path.join(DATA, "forge", "state.json")))
-    net = os.path.expanduser(args.net or state["champion_net"])
-    src = args.src or fleet.current_src()
-    if fleet.read_control().get("SRC") != src:
-        fleet.write_control(SRC=src)
-        log(f"fleet switched to {src}; nodes rebuild at their next chunk boundary")
-    cand, champ = options(args.cand), options(args.champ)
-    log(f"test {args.name}: {cand or 'defaults'} vs {champ or 'defaults'} on {os.path.basename(net)}, {src}, {args.tc}")
-    r = fleet.remote_gate(net, net, tc=args.tc, elo0=args.elo0, elo1=args.elo1, max_games=args.max_games,
-                          cand_opts=cand, champ_opts=champ, src=src, name=args.name, log=log)
-    if r is None:
-        log(f"test {args.name}: the fleet stalled; no result")
-        sys.exit(2)
-    os.makedirs(os.path.join(DATA, "forge", "tests"), exist_ok=True)
-    json.dump(r, open(os.path.join(DATA, "forge", "tests", f"{r['id']}-{args.name}.json"), "w"), indent=2)
-    entry = {
-        "date": r["id"][:8], "name": args.name, "change": args.change, "candidate": cand, "baseline": champ,
-        "network": os.path.basename(net), "build": src, "tc": args.tc, "bounds": [args.elo0, args.elo1],
-        "games": r["games"], "elo": round(r["elo"], 1), "eloLo": round(r["elo_lo"], 1), "eloHi": round(r["elo_hi"], 1),
-        "llr": round(r["sprt"]["llr"], 2), "decision": r["decision"],
-    }
-    ledger = json.load(open(LEDGER)) if os.path.exists(LEDGER) else {"tests": []}
-    ledger["tests"].append(entry)
-    with open(LEDGER, "w") as f:
-        json.dump(ledger, f, indent=2)
-        f.write("\n")
-    log(f"test {args.name}: {r['decision']} after {r['games']} games, elo {r['elo']:+.1f} [{r['elo_lo']:+.1f}, {r['elo_hi']:+.1f}]")
+    entry = run_test(args.name, args.change, options(args.cand), options(args.champ), net=args.net, src=args.src,
+                     tc=args.tc, elo0=args.elo0, elo1=args.elo1, max_games=args.max_games)
+    sys.exit(0 if entry else 2)
 
 
 if __name__ == "__main__":

@@ -120,15 +120,47 @@ def nodes_alive(max_age_minutes=45):
     return alive
 
 
-def running_gate():
-    """The gate currently running on the fleet, or None."""
+def _now():
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def running_gate(stale_minutes=10):
+    """The gate currently running on the fleet, or None.
+
+    A running gate's coordinator refreshes its heartbeat every poll; a gate whose
+    heartbeat is older than stale_minutes was abandoned and does not count.
+    """
     try:
         g = json.loads(get("control/gate.json"))
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return None
         raise
-    return g if g.get("status") == "running" else None
+    if g.get("status") != "running":
+        return None
+    beat = g.get("heartbeat") or g["id"]  # gates from before heartbeats: judge by start time
+    age = _now() - dt.datetime.strptime(beat, "%Y%m%dT%H%M%S").replace(tzinfo=dt.timezone.utc)
+    limit = stale_minutes if g.get("heartbeat") else 180
+    return g if age.total_seconds() < limit * 60 else None
+
+
+def _claim(gate, log, wait_hours=12):
+    """Post `gate` once no other gate is running; return when the fleet is ours."""
+    started, said = time.time(), None
+    while True:
+        busy = running_gate()
+        if busy and busy["id"] != gate["id"]:
+            if time.time() - started > wait_hours * 3600:
+                raise RuntimeError(f"gate {busy['id']} has held the fleet for {wait_hours} hours")
+            if said != busy["id"]:
+                log(f"waiting for gate {busy['id']} ({busy.get('name') or busy['candidate']}) to finish")
+                said = busy["id"]
+            time.sleep(60)
+            continue
+        put("control/gate.json", json.dumps(gate).encode())
+        time.sleep(5)
+        if json.loads(get("control/gate.json")).get("id") == gate["id"]:
+            return
 
 
 def remote_gate(candidate, champion, tc="8+0.08", elo0=0.0, elo1=5.0, alpha=0.05, beta=0.05,
@@ -139,16 +171,13 @@ def remote_gate(candidate, champion, tc="8+0.08", elo0=0.0, elo1=5.0, alpha=0.05
     cand_opts / champ_opts are UCI options for each side; src names the build
     every participating node must have (nodes on another build sit the gate out).
     """
-    busy = running_gate()
-    if busy:
-        raise RuntimeError(f"gate {busy['id']} ({busy.get('name') or busy['candidate']}) is still running")
-    gid = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")
     for path in {candidate, champion}:
         put(f"nets/{os.path.basename(path)}", open(path, "rb").read())
+    gid = _now().strftime("%Y%m%dT%H%M%S")
     gate = {"id": gid, "status": "running", "candidate": f"nets/{os.path.basename(candidate)}",
             "champion": f"nets/{os.path.basename(champion)}", "tc": tc, "pairs": pairs, "elo0": elo0, "elo1": elo1,
-            "cand_opts": cand_opts or {}, "champ_opts": champ_opts or {}, "src": src, "name": name}
-    put("control/gate.json", json.dumps(gate).encode())
+            "cand_opts": cand_opts or {}, "champ_opts": champ_opts or {}, "src": src, "name": name, "heartbeat": gid}
+    _claim(gate, log)
     lower, upper = sprt.bounds(alpha, beta)
     penta, wins, losses, draws, seen = [0] * 5, 0, 0, 0, set()
     last_new, last_log, started = time.time(), 0.0, time.time()
@@ -182,6 +211,8 @@ def remote_gate(candidate, champion, tc="8+0.08", elo0=0.0, elo1=5.0, alpha=0.05
                 log(f"fleet gate {gid}: no batches for {stall_minutes} minutes; giving up")
                 return None
             time.sleep(30)
+            gate["heartbeat"] = _now().strftime("%Y%m%dT%H%M%S")
+            put("control/gate.json", json.dumps(gate).encode())
     finally:
         gate["status"] = "done"
         gate["decision"] = decision
