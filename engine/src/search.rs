@@ -43,6 +43,8 @@ pub struct Limits {
     pub binc: Option<u64>,
     pub movestogo: Option<u64>,
     pub infinite: bool,
+    /// `go ponder`: search on the opponent's time; the time limits apply only after `ponderhit`.
+    pub ponder: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -98,6 +100,8 @@ pub struct Shared {
     pub stop: AtomicBool,
     pub nodes: AtomicU64,
     pub network: Option<Arc<Network>>,
+    /// Set while a `go ponder` search waits for `ponderhit`: no time limit stops it.
+    pub pondering: AtomicBool,
 }
 
 impl Shared {
@@ -107,6 +111,7 @@ impl Shared {
             stop: AtomicBool::new(false),
             nodes: AtomicU64::new(0),
             network,
+            pondering: AtomicBool::new(false),
         })
     }
 }
@@ -255,7 +260,7 @@ impl Searcher {
             self.flushed_nodes = self.nodes;
             if self.shared.stop.load(Ordering::Relaxed) {
                 self.stopped = true;
-            } else if self.main_thread {
+            } else if self.main_thread && !self.shared.pondering.load(Ordering::Relaxed) {
                 if let Some(d) = self.hard_deadline {
                     if Instant::now() >= d {
                         self.stopped = true;
@@ -1041,7 +1046,8 @@ impl Searcher {
                     pv: result.pv.clone(),
                 });
             }
-            if main_thread {
+            // While pondering, only `ponderhit` (then the limits below) or `stop` ends the search.
+            if main_thread && !self.shared.pondering.load(Ordering::Relaxed) {
                 if let Some(sn) = limits.soft_nodes {
                     if self.nodes >= sn {
                         break;
@@ -1111,6 +1117,7 @@ pub fn search_threads(
 ) -> SearchResult {
     let shared = searchers[0].shared.clone();
     shared.stop.store(false, Ordering::Relaxed);
+    shared.pondering.store(limits.ponder, Ordering::Relaxed);
     shared.nodes.store(0, Ordering::Relaxed);
     shared.tt.new_search();
     // Root tablebase filter, probed once here: the distance-to-zero probe is not thread-safe.

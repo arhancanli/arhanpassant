@@ -123,6 +123,7 @@ impl Uci {
                 println!("option name Move Overhead type spin default 30 min 0 max 5000");
                 println!("option name EvalFile type string default {}", self.eval_file);
                 println!("option name Clear Hash type button");
+                println!("option name Ponder type check default false");
                 println!("option name SyzygyPath type string default <empty>");
                 println!("option name SyzygyProbeLimit type spin default 7 min 0 max 7");
                 println!("uciok");
@@ -152,6 +153,12 @@ impl Uci {
                 self.go(&tokens[1..]);
             }
             "stop" => self.stop(),
+            // The opponent played the move we were pondering on: the search continues under its time limits.
+            "ponderhit" => {
+                if let Some(s) = self.searchers_shared() {
+                    s.pondering.store(false, Ordering::Relaxed);
+                }
+            }
             "quit" => return false,
             "d" => println!("{:?}", self.pos),
             "eval" => {
@@ -237,6 +244,8 @@ impl Uci {
                     crate::syzygy::set_probe_limit(v);
                 }
             }
+            // Pondering needs no setting: the GUI decides with `go ponder`.
+            "ponder" => {}
             "clear hash" => {
                 if let Some(s) = self.searchers.first() {
                     s.shared.tt.clear();
@@ -279,6 +288,7 @@ impl Uci {
         while i < t.len() {
             match t[i] {
                 "infinite" => limits.infinite = true,
+                "ponder" => limits.ponder = true,
                 "depth" => limits.depth = num(i).map(|v| v as i32),
                 "nodes" => limits.nodes = num(i),
                 "softnodes" => limits.soft_nodes = num(i),
@@ -318,11 +328,19 @@ impl Uci {
                     println!("{}", info_line(info));
                 };
                 let result = search_threads(&mut searchers, &pos, &history, &limits, overhead, &mut report);
-                // For `go infinite`, hold the answer until the GUI says stop.
-                while limits.infinite && !gs.load(Ordering::Relaxed) {
+                // For `go infinite`, hold the answer until the GUI says stop; for `go ponder`,
+                // until `ponderhit` or `stop` (a ponder search can finish early, e.g. on a mate).
+                let shared = searchers[0].shared.clone();
+                while (limits.infinite || shared.pondering.load(Ordering::Relaxed)) && !gs.load(Ordering::Relaxed) {
                     std::thread::sleep(std::time::Duration::from_millis(2));
                 }
-                println!("bestmove {}", result.best_move.to_uci());
+                // Name the expected reply so the GUI can ponder on it.
+                match result.pv.get(1) {
+                    Some(reply) if result.pv[0] == result.best_move => {
+                        println!("bestmove {} ponder {}", result.best_move.to_uci(), reply.to_uci())
+                    }
+                    _ => println!("bestmove {}", result.best_move.to_uci()),
+                }
                 io::stdout().flush().ok();
                 searchers
             })
