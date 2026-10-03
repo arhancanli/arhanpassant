@@ -14,6 +14,7 @@ import datetime as dt
 import functools
 import http.client
 import json
+import re
 import os
 import time
 import urllib.error
@@ -129,17 +130,29 @@ def set_net(net_path, tag, nodes=8000, hours=0.15):
 
 
 def nodes_alive(max_age_minutes=45):
-    """Number of nodes that reported status recently."""
-    alive = 0
+    """Number of nodes that did any work recently: a self-play status update, a gate batch or an SPSA batch.
+
+    A node only writes status/ after a self-play chunk, so nodes kept busy by
+    gates for hours would otherwise read as gone (the loop then gated on the Mac).
+    """
     now = dt.datetime.now(dt.timezone.utc)
+    recent = lambda t: (now - t).total_seconds() < max_age_minutes * 60
+    hosts = set()
     for n in list_names("status/"):
         try:
             s = json.loads(get(n))
-            t = dt.datetime.fromisoformat(s["updated"].replace("Z", "+00:00"))
-            alive += (now - t).total_seconds() < max_age_minutes * 60
+            if recent(dt.datetime.fromisoformat(s["updated"].replace("Z", "+00:00"))):
+                hosts.add(s.get("host", n))
         except Exception:
             pass
-    return alive
+    # Batch uploads are named <kind>/<id>/<host>-<YYYYmmddTHHMMSS>[-<random>].json.
+    stamped = re.compile(r"^(?:gates|spsa)/[^/]+/(.+?)-(\d{8}T\d{6})(?:-\d+)?\.json$")
+    for prefix in ("gates/", "spsa/"):
+        for n in list_names(prefix):
+            m = stamped.match(n)
+            if m and recent(dt.datetime.strptime(m.group(2), "%Y%m%dT%H%M%S").replace(tzinfo=dt.timezone.utc)):
+                hosts.add(m.group(1))
+    return len(hosts)
 
 
 def _now():
