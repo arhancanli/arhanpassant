@@ -52,9 +52,10 @@ def games(pgn):
 def speed(tags):
     """Lichess's speed from the time control: estimated game time = base + 40 x increment."""
     tc = tags.get("TimeControl", "-")
-    if tc == "-" or "/" in tc:
-        return "correspondence"
     base, _, inc = tc.partition("+")
+    # Correspondence games export as "-", "1/259200" or "2 days per move".
+    if not base.isdigit() or not (inc or "0").isdigit():
+        return "correspondence"
     est = int(base) + 40 * int(inc or 0)
     return "ultrabullet" if est < 30 else "bullet" if est < 180 else "blitz" if est < 480 else "rapid" if est < 1500 else "classical"
 
