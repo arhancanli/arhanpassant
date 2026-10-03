@@ -1,0 +1,388 @@
+{
+  "tests": [
+    {
+      "date": "20261002",
+      "name": "tm-nodes",
+      "change": "Time management: scale the soft limit by the best move's share of the search and by how long it has stayed best",
+      "candidate": {
+        "tm_nodes": "1"
+      },
+      "baseline": {},
+      "network": "champion-0.8.0.nnue",
+      "build": "src/9c5eb27.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 1888,
+      "elo": 15.5,
+      "eloLo": 7.0,
+      "eloHi": 24.0,
+      "llr": 3.42,
+      "decision": "H1"
+    },
+    {
+      "date": "20261002",
+      "name": "corr-pawn",
+      "change": "Evaluation correction: learn, per pawn structure, how far search results land from the static evaluation, and correct for it",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128"
+      },
+      "baseline": {
+        "tm_nodes": "1"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/56828d4.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 960,
+      "elo": 29.4,
+      "eloLo": 17.1,
+      "eloHi": 41.7,
+      "llr": 3.2,
+      "decision": "H1"
+    },
+    {
+      "date": "20261002",
+      "name": "probcut",
+      "change": "ProbCut: at depth 5 and above, a capture that beats beta by 200 at reduced depth cuts the node",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "probcut_margin": "200"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/d27b7c6.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 3872,
+      "elo": -4.0,
+      "eloLo": -10.1,
+      "eloHi": 2.0,
+      "llr": -3.38,
+      "decision": "H0"
+    },
+    {
+      "date": "20261002",
+      "name": "razoring",
+      "change": "Razoring: at depth 4 or less, a position 250 per ply below alpha is checked with captures only",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "razor_margin": "250"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/b114471.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 3840,
+      "elo": -3.6,
+      "eloLo": -9.8,
+      "eloHi": 2.5,
+      "llr": -3.11,
+      "decision": "H0"
+    },
+    {
+      "date": "20261002",
+      "name": "corr-np",
+      "change": "Evaluation correction also learned per piece set of each side (pieces other than pawns)",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/b114471.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 4736,
+      "elo": 7.9,
+      "eloLo": 2.3,
+      "eloHi": 13.5,
+      "llr": 3.3,
+      "decision": "H1"
+    },
+    {
+      "date": "20261002",
+      "name": "corr-cont",
+      "change": "Evaluation correction also learned per previous move",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "corr_cont": "128"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/b114471.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 448,
+      "elo": -70.8,
+      "eloLo": -89.3,
+      "eloHi": -52.6,
+      "llr": -3.05,
+      "decision": "H0"
+    },
+    {
+      "date": "20261002",
+      "name": "lmr-deeper",
+      "change": "After a reduced search fails high, re-search one ply deeper or shallower depending on the margin",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/b114471.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 12000,
+      "elo": 4.4,
+      "eloLo": 1.0,
+      "eloHi": 7.8,
+      "llr": 3.08,
+      "decision": "H1"
+    },
+    {
+      "date": "20261002",
+      "name": "qs-futility",
+      "change": "Quiescence futility: skip captures that cannot reach alpha even with a 150 margin",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "qs_fut_margin": "150"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/bf09b2a.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 896,
+      "elo": -25.6,
+      "eloLo": -38.5,
+      "eloHi": -12.8,
+      "llr": -3.13,
+      "decision": "H0"
+    },
+    {
+      "date": "20261002",
+      "name": "mopup",
+      "change": "Mop-up: a bare king against mating material is driven to the edge (bishop and knight: the bishop's corner); converted 7 of 7 such endings at 100 ms a move, against 2 of 7 without",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/bf09b2a.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        -5.0,
+        0.0
+      ],
+      "games": 6240,
+      "elo": 0.3,
+      "eloLo": -3.8,
+      "eloHi": 4.5,
+      "llr": 3.17,
+      "decision": "H1"
+    },
+    {
+      "date": "20261002",
+      "name": "tt-hist",
+      "change": "A table cutoff by a quiet move rewards that move's history, as a search cutoff would",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "tt_hist": "1"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/bf09b2a.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 12128,
+      "elo": 1.0,
+      "eloLo": -2.3,
+      "eloHi": 4.4,
+      "llr": -2.51,
+      "decision": "inconclusive"
+    },
+    {
+      "date": "20261002",
+      "name": "prior-bonus",
+      "change": "A node that fails low rewards the opponent's quiet move that led to it",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/bf09b2a.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 7904,
+      "elo": 5.2,
+      "eloLo": 1.0,
+      "eloHi": 9.4,
+      "llr": 2.99,
+      "decision": "H1"
+    },
+    {
+      "date": "20261002",
+      "name": "eval-hist",
+      "change": "The opponent's quiet move learns from the evaluation swing it caused",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1",
+        "eval_hist": "10"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/bf09b2a.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 3296,
+      "elo": -4.2,
+      "eloLo": -10.7,
+      "eloHi": 2.3,
+      "llr": -3.03,
+      "decision": "H0"
+    },
+    {
+      "date": "20261002",
+      "name": "lmr-ttcap",
+      "change": "Quiet moves are reduced one more ply when the table's move is a capture",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1",
+        "lmr_ttcap": "1"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1"
+      },
+      "network": "champion-0.9.0.nnue",
+      "build": "src/bf09b2a.tar.gz",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 12096,
+      "elo": 2.8,
+      "eloLo": -0.6,
+      "eloHi": 6.3,
+      "llr": 0.56,
+      "decision": "inconclusive"
+    }
+  ]
+}

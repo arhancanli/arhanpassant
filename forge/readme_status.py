@@ -16,6 +16,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 NAMES = {"tm-nodes": "node-based time management", "corr-pawn": "pawn-structure evaluation correction",
+         "prior-bonus": "a history bonus for the move that made the opponent fail low", "tt-hist": "table-cutoff history",
+         "eval-hist": "evaluation-swing history", "lmr-ttcap": "an extra reduction under a capture table move",
+         "cont4": "four-ply continuation history", "corr-joint": "joint correction learning",
          "corr-np": "piece-set evaluation correction", "corr-cont": "previous-move evaluation correction",
          "razoring": "razoring", "probcut": "ProbCut", "qs-futility": "quiescence futility pruning",
          "lmr-deeper": "deeper/shallower re-searches", "hist-prune": "history pruning", "mopup": "mop-up endgame knowledge"}
@@ -47,32 +50,47 @@ def main():
         f"({', '.join(NAMES.get(t['name'], t['name']) for t in passed)}), and {len(failed)} did not. Every result, "
         "including the failures, is in [`forge/tests.json`](forge/tests.json).",
         "",
-        f"**Measured strength: about {anchors['combined_estimate']:,} Elo** (95% interval {lo:,} to {hi:,} from game "
-        f"statistics alone), from {games} games of version {anchors['version']} against Stockfish 19 at fixed `UCI_Elo` "
-        f"levels of {levels}. Stockfish calibrates those levels to the CCRL 40/4 list at 120s+1s; these games were "
-        "played at 10s+0.1s, so treat the absolute number as approximate. Details: "
-        "[`forge/anchors.json`](forge/anchors.json).",
-        "",
     ]
+    old_anchor = (f"{games} games of version {anchors['version']} against Stockfish 19 at fixed `UCI_Elo` levels of "
+                  f"{levels}, which Stockfish calibrates to the CCRL 40/4 list")
     engines_path = os.path.join(ROOT, "forge", "engines.json")
     if os.path.exists(engines_path):
-        # Matches against other open-source engines (forge/engines_report.py), one record per time control.
+        # Matches against other open-source engines (forge/engines_report.py); the first run is the headline.
         runs = json.load(open(engines_path))["runs"]
-        parts = []
+        head, rest = runs[0], runs[1:]
+        families = sorted({m["opponent"].split("-")[0].capitalize() for m in head["matches"]})
+        lo_e, hi_e = head["ci95"]
+        others = "; ".join(f"at {r['tc']}, {r['games']:,} games give {r['estimate']:,} ({r['ci95'][0]:,} to {r['ci95'][1]:,})"
+                           for r in rest)
+        top = {}
         for r in runs:
-            lo_e, hi_e = r["ci95"]
-            opponents = sorted({m["opponent"] for m in r["matches"]})
-            parts.append(f"about **{r['estimate']:,}** at {r['tc']} (95% interval {lo_e:,} to {hi_e:,}, "
-                         f"{r['games']:,} games against {len(opponents)} engines)")
-        top = [m for r in runs for m in r["matches"] if m["opponent"] not in r["fit_opponents"]]
-        top_text = "; ".join(f"{m['opponent']} (CCRL {m['ccrl']:,}): {100 * m['score']:.1f}% of {m['games']} games"
-                             for m in sorted(top, key=lambda m: -m["ccrl"]))
+            for m in r["matches"]:
+                if m["opponent"] not in r["fit_opponents"] and m["score"] < 0.2:
+                    t = top.setdefault(m["opponent"], {"ccrl": m["ccrl"], "games": 0, "points": 0.0})
+                    t["games"] += m["games"]
+                    t["points"] += m["score"] * m["games"]
+        top_text = ", ".join(f"{o.replace('-', ' ', 1).title()} (CCRL {t['ccrl']:,}) {100 * t['points'] / t['games']:.1f}% "
+                             f"of {t['games']} games" for o, t in sorted(top.items(), key=lambda kv: -kv[1]["ccrl"]))
         lines += [
-            "**Against other engines** on the CCRL Blitz scale (2'+1\"): " + "; ".join(parts) + ". Each opponent's "
-            "rating is read from the CCRL list and one rating is fitted to every match the engine scores 20-80% in; "
-            "the interval is from game statistics alone (the opponents' own CCRL ratings carry 10-20 Elo more)."
-            + (f" Too far apart to rate against: {top_text}." if top_text else "")
-            + " Details: [`forge/engines.json`](forge/engines.json).",
+            f"**Measured strength: about {head['estimate']:,} on the CCRL Blitz scale** (95% interval {lo_e:,} to "
+            f"{hi_e:,} from game statistics alone), from {head['games']:,} games at {head['tc']} against "
+            f"{len(head['matches'])} versions of {', '.join(families[:-1])} and {families[-1]} with published CCRL "
+            "Blitz ratings: each opponent's rating is read from the CCRL list and one rating is fitted to the "
+            f"{len(head['fit_opponents'])} matches the engine scores 20-80% in" + (f"; {others}" if others else "") + ". "
+            + (f"Stronger engines are too far ahead to rate against: {top_text}. " if top_text else "")
+            + "The matches ran before the last search changes were accepted. "
+            "These are our own matches on cloud machines, not an official CCRL rating, and the opponents' own "
+            "ratings carry another 10-20 Elo of uncertainty. Details: [`forge/engines.json`](forge/engines.json).",
+            "",
+            f"An earlier measurement, {old_anchor}, gave about {anchors['combined_estimate']:,} "
+            "([`forge/anchors.json`](forge/anchors.json)).",
+            "",
+        ]
+    else:
+        lines += [
+            f"**Measured strength: about {anchors['combined_estimate']:,} Elo** (95% interval {lo:,} to {hi:,} from "
+            f"game statistics alone), from {old_anchor} at 120s+1s; these games were played at 10s+0.1s, so treat "
+            "the absolute number as approximate. Details: [`forge/anchors.json`](forge/anchors.json).",
             "",
         ]
     if "--dry-run" in sys.argv:
