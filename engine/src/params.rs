@@ -72,14 +72,14 @@ tunables! {
     corr_pawn: 128, 0, 256;       // pawn-structure eval correction, 128 = full weight (+29.4 Elo)
     razor_margin: 0, 0, 600;
     qs_fut_margin: 0, 0, 400;
-    lmr_deeper: 0, 0, 1;          // re-search deeper or shallower after a reduced search fails high
+    lmr_deeper: 1, 0, 1;          // re-search deeper or shallower after a reduced search fails high (+4.4 Elo)
     probcut_margin: 0, 0, 400;
-    mopup: 0, 0, 1;               // drive a bare king to the edge (see eval::mop_up)
+    mopup: 1, 0, 1;               // drive a bare king to the edge (see eval::mop_up); passed as not worse, converts KBNK
     corr_np: 128, 0, 256;         // eval correction by each side's pieces other than pawns (+7.9 Elo)
     corr_cont: 0, 0, 256;         // eval correction by the previous move
     hist_prune: 0, 0, 8000;       // skip quiet moves whose history is below -this x (reduced depth + 1)
     tt_hist: 0, 0, 1;             // a table cutoff by a quiet move rewards that move's history
-    prior_bonus: 0, 0, 1;         // a node that fails low rewards the opponent's quiet move that led to it
+    prior_bonus: 1, 0, 1;         // a node that fails low rewards the opponent's quiet move that led to it (+5.2 Elo)
     eval_hist: 0, 0, 40;          // history of the opponent's quiet move learns from how the eval changed after it
     lmr_ttcap: 0, 0, 1;           // reduce quiet moves one more ply when the table's move is a capture
     cont4: 0, 0, 1;               // continuation history also keyed by our own move two turns ago
