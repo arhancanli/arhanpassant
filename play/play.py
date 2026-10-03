@@ -259,7 +259,7 @@ def page_md(g, s, repo, engine):
         f"The engine is {engine.name}, thinking {THINK_MS // 1000} seconds a move on GitHub's servers. "
         "Its strength, and how it keeps improving, are on the "
         "[engine page](https://github.com/arhancanli/arhanpassant). For a game with a clock, play it "
-        "[on Lichess](https://lichess.org/@/arhanpassant) or [on the website](https://arhanpassant.vercel.app/play). "
+        "[on Lichess](https://lichess.org/@/arhanpassant) or [on the website](https://arhanpassant.com/play). "
         "This page, board.svg, game.json and every finished game (games/) live on the `play` branch. "
         "Piece images by Colin M.L. Burnett, CC BY-SA 3.0.",
         "",

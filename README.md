@@ -5,10 +5,10 @@ new version learns from the engine's own self-play games, and it only replaces
 the previous version after beating it in a statistical test over thousands of
 games.
 
-**[Play it in your browser](https://arhanpassant.vercel.app/play)** ·
+**[Play it in your browser](https://arhanpassant.com/play)** ·
 **[Play it on Lichess](https://lichess.org/@/arhanpassant)** ·
-**[Adaptive puzzle trainer](https://arhanpassant.vercel.app/train)** ·
-**[Promotion ledger](https://arhanpassant.vercel.app/engine)**
+**[Adaptive puzzle trainer](https://arhanpassant.com/train)** ·
+**[Promotion ledger](https://arhanpassant.com/engine)**
 
 ## Play it here on GitHub
 

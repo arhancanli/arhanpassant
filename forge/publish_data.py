@@ -59,7 +59,7 @@ def main():
                 json.dump(site, f, indent=1)
                 f.write("\n")
             with open(os.path.join(work, "README.md"), "w") as f:
-                f.write("Live numbers for https://arhanpassant.vercel.app, written by `forge/publish_data.py` on the main branch.\n")
+                f.write("Live numbers for https://arhanpassant.com, written by `forge/publish_data.py` on the main branch.\n")
             git("add", "-A", cwd=work)
             if git("status", "--porcelain", cwd=work):
                 git("commit", "-q", "-m", f"Live numbers {site['updated'][:10]}", cwd=work)
