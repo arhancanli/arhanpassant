@@ -1,6 +1,6 @@
 {
- "updated": "2026-10-03T17:19:29Z",
- "champion": "0.9.0",
+ "updated": "2026-10-04T00:20:17Z",
+ "champion": "0.10.0",
  "ledger": [
   {
    "version": "0.1.0",
@@ -622,6 +622,58 @@
      "vsBots": 1,
      "vsPeople": 0,
      "ratingChange": 329
+    }
+   }
+  },
+  {
+   "date": "2026-10-03",
+   "games": 53,
+   "positions": 4207,
+   "bySpeed": {
+    "blitz": {
+     "games": 19,
+     "won": 15,
+     "drawn": 2,
+     "lost": 2,
+     "vsBots": 19,
+     "vsPeople": 0,
+     "ratingChange": 100
+    },
+    "rapid": {
+     "games": 12,
+     "won": 11,
+     "drawn": 1,
+     "lost": 0,
+     "vsBots": 12,
+     "vsPeople": 0,
+     "ratingChange": 200
+    },
+    "bullet": {
+     "games": 12,
+     "won": 9,
+     "drawn": 2,
+     "lost": 1,
+     "vsBots": 12,
+     "vsPeople": 0,
+     "ratingChange": 348
+    },
+    "classical": {
+     "games": 6,
+     "won": 2,
+     "drawn": 2,
+     "lost": 2,
+     "vsBots": 6,
+     "vsPeople": 0,
+     "ratingChange": -11
+    },
+    "correspondence": {
+     "games": 4,
+     "won": 3,
+     "drawn": 0,
+     "lost": 1,
+     "vsBots": 4,
+     "vsPeople": 0,
+     "ratingChange": -159
     }
    }
   }
