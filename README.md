@@ -171,6 +171,14 @@ pair-based conservative 95% score intervals. These matches measure outside
 opposition; the existing SPRT gates decide promotions. Historical cloud ratings
 are not extrapolated from these Mac results.
 
+Analyse saved losses with `forge/blunders.py` using the dependencies in
+`forge/requirements-analysis.txt`. It compares Stockfish's preferred move
+with the played move from the same position, at equal node limits and with
+fresh search state. A preferred move has zero estimated loss; restricted
+searches that disagree with the recommendation are counted separately.
+Saved reports include input hashes and the reference build. These diagnostics
+guide experiments; they do not establish a strength gain or replace match gates.
+
 For a network-capacity experiment, append `--train-hidden 1024` when installing
 the Mac profile. The next training round uses that width and the normal gate
 compares the candidate with the current champion before any promotion. Omit

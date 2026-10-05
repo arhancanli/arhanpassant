@@ -18,7 +18,9 @@ jobs:
       - name: Unit and perft tests
         run: cargo test --release --workspace
       - name: Improvement controller and gate recovery
-        run: python3 -m unittest discover -s forge/tests -v
+        run: |
+          python3 -m pip install -r forge/requirements-analysis.txt
+          python3 -m unittest discover -s forge/tests -v
       - name: Full perft suite and SPRT calibration
         run: cargo test --release --workspace -- --ignored
       - name: Bench
