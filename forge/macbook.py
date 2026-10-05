@@ -100,8 +100,10 @@ def status(data):
            "pending_network": state.get("pending"), "error": state.get("error")}
     if state.get("training_deferred_for"):
         out["training_deferred_for"] = state["training_deferred_for"]
-    if state.get("external_milestone"):
-        out["external_milestone"] = state["external_milestone"]
+    milestones = read(data / "forge/milestones/index.json", {"runs": []})["runs"]
+    current = next((r for r in milestones if r["status"] != "complete"), milestones[-1] if milestones else None)
+    if current:
+        out["external_milestone"] = {k: current[k] for k in ("identity", "version", "games", "target_games", "status")}
     if state.get("activity"):
         out["activity"] = state["activity"]
     if state.get("pending"):
