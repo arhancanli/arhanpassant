@@ -243,8 +243,12 @@ def search_threads_for(args, item):
     return threads
 
 
-def selfplay_workers(args, item):
+def selfplay_workers(args, item, state=None):
     reserved = max(args.cpu_budget // 2, search_threads_for(args, item))
+    if state is not None:
+        saved = checkpointed_search_concurrency(args, state, item)
+        if saved is not None:
+            reserved = max(reserved, saved * search_threads_for(args, item))
     return min(args.selfplay_threads, args.cpu_budget - reserved)
 
 
@@ -276,29 +280,45 @@ def accepted_checkpoint(previous, item, search, out):
             and all(config["champion_options"].get(k) == v for k, v in item.get("common_options", {}).items()))
 
 
-def search_has_progress(args, state, item, ready):
-    """Finish an existing gate before training changes its network. A queued
-    test with no completed pairs does not delay a ready training round."""
+def checkpointed_search_concurrency(args, state, item, previous=None):
+    """Keep a completed gate's allocation when all test inputs still match.
+
+    Storage can pause or restart generation, changing the otherwise available
+    match cores. That must not replace a valid gate or release its training
+    deferral. The saved allocation must still fit the owner's current budget.
+    """
     engine, baseline, _, out = search_evidence(args, state, item)
+    previous = load_json(out, None) if previous is None else previous
+    if not previous or previous.get("games", 0) == 0:
+        return None
+    saved = previous.get("config", {}).get("concurrency")
+    threads = search_threads_for(args, item)
+    if type(saved) is not int or not 1 <= saved <= args.concurrency or saved * threads > args.cpu_budget:
+        return None
+    search = load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}, "history": []})
+    base = {**search["accepted"], **item.get("common_options", {})}
+    elo0, elo1 = item.get("bounds", [0.0, 5.0])
+    expected = local_gate.configuration(engine=engine, baseline_engine=baseline, arena=args.arena,
+                                         candidate=state["champion_net"], champion=state["champion_net"],
+                                         book=args.book, tc=args.tc, concurrency=saved, max_games=args.max_games,
+                                         elo0=elo0, elo1=elo1, cand_opts={**base, **item["opts"]}, champ_opts=base,
+                                         batch_games=args.batch_games)
+    return saved if previous.get("config") == expected else None
+
+
+def search_has_progress(args, state, item, ready):
+    """Finish the same checkpoint regardless of temporary storage readiness.
+
+    A queued test with no completed pairs does not delay a ready training round.
+    """
+    _, _, _, out = search_evidence(args, state, item)
     previous = load_json(out, None)
     if not previous or previous.get("games", 0) == 0:
         return False
     search = load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}, "history": []})
     if accepted_checkpoint(previous, item, search, out):
-        return True  # Recover acceptance before dequeuing, before a new network changes the filename.
-    threads = search_threads_for(args, item)
-    # At startup the old generator has been stopped; plan the allocation that
-    # ensure_selfplay will establish, rather than mistaking the gap for a new profile.
-    playing = selfplay_workers(args, item) if ready else 0
-    workers = min(args.concurrency, (args.cpu_budget - playing) // threads)
-    base = {**search["accepted"], **item.get("common_options", {})}
-    elo0, elo1 = item.get("bounds", [0.0, 5.0])
-    expected = local_gate.configuration(engine=engine, baseline_engine=baseline, arena=args.arena,
-                                         candidate=state["champion_net"], champion=state["champion_net"],
-                                         book=args.book, tc=args.tc, concurrency=workers, max_games=args.max_games,
-                                         elo0=elo0, elo1=elo1, cand_opts={**base, **item["opts"]}, champ_opts=base,
-                                         batch_games=args.batch_games)
-    return previous.get("config") == expected
+        return True
+    return checkpointed_search_concurrency(args, state, item, previous) is not None
 
 
 def gate(args, candidate, state, logfile):
@@ -348,6 +368,11 @@ def search_batch(args, state, logfile):
         result = previous
         base = previous["config"]["champion_options"]
     else:
+        saved = checkpointed_search_concurrency(args, state, item, previous)
+        if saved is not None:
+            if saved > workers:
+                raise RuntimeError(f"saved search gate needs {saved} workers, only {workers} available; reduce generation first")
+            workers = saved
         result = local_gate.gate(engine=engine, baseline_engine=baseline, arena=args.arena,
                                  candidate=state["champion_net"], champion=state["champion_net"],
                                  book=args.book, tc=args.tc, concurrency=max(1, workers),
@@ -555,7 +580,7 @@ def run_controller(args, forge_dir):
                 finish_search = (fresh >= args.min_new and testing
                                  and search_has_progress(args, state, queue["pending"][0], ready))
                 if fresh < args.min_new or finish_search:
-                    threads = (selfplay_workers(args, queue["pending"][0]) if testing else
+                    threads = (selfplay_workers(args, queue["pending"][0], state) if testing else
                                min(args.selfplay_threads, args.cpu_budget - max(1, args.cpu_budget // 2))
                                if external or review else args.selfplay_threads)
                     ensure_selfplay(args, state, threads)
