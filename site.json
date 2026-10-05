@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-05T08:13:13Z",
+ "updated": "2026-10-05T08:39:12Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -527,6 +527,42 @@
    "eloHi": 6.3,
    "llr": 0.56,
    "decision": "inconclusive"
+  },
+  {
+   "date": "20261005",
+   "name": "neon-output",
+   "change": "Exact NEON neural output on Apple Silicon, using i64 reduction; compare against the saved scalar build at equal time control and network",
+   "candidate": {
+    "tm_nodes": "1",
+    "corr_pawn": "128",
+    "corr_np": "128",
+    "lmr_deeper": "1",
+    "mopup": "1",
+    "prior_bonus": "1"
+   },
+   "baseline": {
+    "tm_nodes": "1",
+    "corr_pawn": "128",
+    "corr_np": "128",
+    "lmr_deeper": "1",
+    "mopup": "1",
+    "prior_bonus": "1"
+   },
+   "network": "champion-0.12.0.nnue",
+   "build": "9beb6fb3630b-vs-52d75bca5f48-d6367c515de8",
+   "tc": "8+0.08",
+   "bounds": [
+    0.0,
+    5.0
+   ],
+   "games": 448,
+   "elo": 80.5,
+   "eloLo": 63.2,
+   "eloHi": 98.3,
+   "llr": 3.05,
+   "decision": "H1",
+   "runtime": "local",
+   "evidence": "local-neon-output-9beb6fb3630b-vs-52d75bca5f48-d6367c515de8.json"
   }
  ],
  "anchors": {
