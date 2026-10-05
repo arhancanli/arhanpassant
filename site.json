@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-05T08:39:12Z",
+ "updated": "2026-10-05T17:23:41Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -563,6 +563,43 @@
    "decision": "H1",
    "runtime": "local",
    "evidence": "local-neon-output-9beb6fb3630b-vs-52d75bca5f48-d6367c515de8.json"
+  },
+  {
+   "date": "20261005",
+   "name": "cont4",
+   "change": "Continuation history also keyed by our own move two turns ago",
+   "candidate": {
+    "tm_nodes": "1",
+    "corr_pawn": "128",
+    "corr_np": "128",
+    "lmr_deeper": "1",
+    "mopup": "1",
+    "prior_bonus": "1",
+    "cont4": "1"
+   },
+   "baseline": {
+    "tm_nodes": "1",
+    "corr_pawn": "128",
+    "corr_np": "128",
+    "lmr_deeper": "1",
+    "mopup": "1",
+    "prior_bonus": "1"
+   },
+   "network": "champion-0.12.0.nnue",
+   "build": "9beb6fb3630b-d6367c515de8",
+   "tc": "8+0.08",
+   "bounds": [
+    0.0,
+    5.0
+   ],
+   "games": 7296,
+   "elo": -0.6,
+   "eloLo": -5.0,
+   "eloHi": 3.8,
+   "llr": -3.03,
+   "decision": "H0",
+   "runtime": "local",
+   "evidence": "local-cont4-9beb6fb3630b-d6367c515de8.json"
   }
  ],
  "anchors": {
