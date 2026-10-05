@@ -82,6 +82,31 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             local_gate.validate_batch({**valid, "games": 2}, 4)
 
+    def test_mid_batch_binary_changes_are_not_counted_as_the_original_build(self):
+        def changed(cmd, logfile):
+            self.arena(cmd, logfile)
+            (self.root / "engine").write_bytes(b"replacement build")
+            return 0
+        with patch.object(local_gate, "run", changed):
+            with self.assertRaisesRegex(RuntimeError, "gate input changed while testing"):
+                local_gate.gate(**self.kw)
+        saved = json.loads(pathlib.Path(self.kw["out"]).read_text())
+        self.assertEqual(saved["games"], 0)
+
+    def test_engine_symlink_is_resolved_before_launching_matches(self):
+        link = self.root / "current"
+        link.symlink_to(self.root / "engine")
+        replacement = self.root / "replacement"
+        replacement.write_bytes(b"replacement build")
+        def switched(cmd, logfile):
+            link.unlink()
+            link.symlink_to(replacement)
+            self.assertIn(f"cmd={(self.root / 'engine').resolve()}", cmd)
+            return self.arena(cmd, logfile)
+        with patch.object(local_gate, "run", switched):
+            result = local_gate.gate(**{**self.kw, "engine": str(link)})
+        self.assertEqual(result["games"], 4)
+
 
 class ControllerTests(unittest.TestCase):
     def setUp(self):
@@ -181,6 +206,53 @@ class ControllerTests(unittest.TestCase):
             loop.stop_selfplay(self.args, state)
         self.assertNotIn("selfplay_pid", state)
         self.assertEqual(state["selfplay_threads"], 0)
+
+    def test_multithreaded_matches_fit_the_cpu_budget_and_can_reserve_all_cores(self):
+        args = types.SimpleNamespace(cpu_budget=18, concurrency=18, selfplay_threads=18)
+        item = {"opts": {"smp_vote": "1"}, "common_options": {"Threads": "3"}}
+        self.assertEqual(loop.selfplay_workers(args, item), 9)
+        state = {"selfplay_pid": 23, "selfplay_threads": 9}
+        with patch.object(loop, "alive", return_value=True):
+            self.assertEqual(loop.gate_workers(args, state, 3), 3)
+            with self.assertRaises(ValueError):
+                loop.gate_workers(args, state, 18)
+        with patch.object(loop, "alive", return_value=False):
+            self.assertEqual(loop.gate_workers(args, state, 3), 6)
+        item["common_options"]["Threads"] = "18"
+        self.assertEqual(loop.selfplay_workers(args, item), 0)
+        with patch.object(loop, "stop_selfplay") as stop:
+            loop.ensure_selfplay(args, state, 0)
+            stop.assert_called_once_with(args, state)
+        for value in ("0", "19", "bad"):
+            item["common_options"]["Threads"] = value
+            with self.assertRaises(ValueError):
+                loop.search_threads_for(args, item)
+        with self.assertRaises(ValueError):
+            loop.search_threads_for(args, {"opts": {"Threads": "3"}})
+
+    def test_common_match_options_are_equal_and_are_not_promoted_as_search_settings(self):
+        engine, net = self.root / "engine", self.root / "nets/champion.nnue"
+        engine.write_bytes(b"engine")
+        net.write_bytes(b"network")
+        args = types.SimpleNamespace(data=str(self.root), engine=str(engine), arena="arena", book="book",
+                                     concurrency=18, cpu_budget=18, max_games=12000, tc="8+0.08",
+                                     batch_games=64, no_publish=True)
+        item = {"name": "smp-vote-3t", "change": "helper voting", "opts": {"smp_vote": "1"},
+                "common_options": {"Threads": "3"}}
+        loop.save_json(str(self.root / "forge/queue.json"), {"pending": [item], "done": []})
+        loop.save_json(str(self.root / "forge/search.json"), {"accepted": {"tm_nodes": "1"}, "history": []})
+        def passed(**kw):
+            self.assertEqual(kw["cand_opts"], {"tm_nodes": "1", "Threads": "3", "smp_vote": "1"})
+            self.assertEqual(kw["champ_opts"], {"tm_nodes": "1", "Threads": "3"})
+            self.assertEqual(kw["concurrency"], 3)
+            return {"decision": "H1", "games": 1104, "elo": 26.5, "elo_lo": 14.2,
+                    "elo_hi": 38.8, "sprt": {"llr": 2.98}}
+        state = {"champion_net": str(net), "selfplay_pid": 23, "selfplay_threads": 9}
+        with patch.object(loop, "ROOT", str(self.root)), patch.object(local_gate, "gate", passed):
+            with patch.object(loop, "alive", return_value=True), contextlib.redirect_stdout(io.StringIO()):
+                loop.search_batch(args, state, str(self.root / "forge/log"))
+        accepted = json.loads((self.root / "forge/search.json").read_text())["accepted"]
+        self.assertEqual(accepted, {"tm_nodes": "1", "smp_vote": "1"})
 
 
 if __name__ == "__main__":

@@ -83,7 +83,8 @@ def summarize(result):
 def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games,
          elo0, elo1, cand_opts, champ_opts, out, logfile, log, batch_games=64,
          max_batches=None, baseline_engine=None):
-    baseline_engine = baseline_engine or engine
+    engine = os.path.realpath(engine)
+    baseline_engine = os.path.realpath(baseline_engine or engine)
     config = {
         "engine": os.path.realpath(engine), "engine_sha256": digest(engine),
         "baseline_engine": os.path.realpath(baseline_engine), "baseline_sha256": digest(baseline_engine),
@@ -94,6 +95,17 @@ def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games
         "champion_options": champ_opts, "batch_games": batch_games,
         "execution_profile": os.environ.get("ARHANPASSANT_EXECUTION_PROFILE", "manual"),
     }
+    inputs = {engine: config["engine_sha256"], baseline_engine: config["baseline_sha256"],
+              arena: config["arena_sha256"], book: config["book_sha256"]}
+    if candidate:
+        inputs[candidate] = config["candidate_sha256"]
+    if champion:
+        inputs[champion] = config["champion_sha256"]
+
+    def unchanged():
+        for path, expected in inputs.items():
+            if digest(path) != expected:
+                raise RuntimeError(f"gate input changed while testing: {path}; completed batches are saved")
     try:
         with open(out) as f:
             result = json.load(f)
@@ -112,6 +124,7 @@ def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games
         return result
     completed = 0
     while result["games"] < max_games and (max_batches is None or completed < max_batches):
+        unchanged()
         count = min(batch_games, max_games - result["games"])
         if count < 2 or count % 2:
             raise ValueError("gate budgets must contain complete game pairs")
@@ -139,6 +152,7 @@ def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games
                 os.remove(batch_out)
             if run(cmd, logfile) != 0:
                 raise RuntimeError("local arena failed; completed batches are saved")
+            unchanged()
             with open(batch_out) as f:
                 batch = json.load(f)
             validate_batch(batch, count)

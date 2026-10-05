@@ -169,7 +169,9 @@ def storage_ready(args, state):
 def start_selfplay(args, state, threads=None):
     """(Re)start local self-play with the champion network."""
     stop_selfplay(args, state)
-    threads = threads or args.selfplay_threads
+    threads = args.selfplay_threads if threads is None else threads
+    if threads == 0:
+        return
     gen = state["generation"]
     out = os.path.join(args.data, "selfplay", f"gen{gen}")
     os.makedirs(out, exist_ok=True)
@@ -193,6 +195,9 @@ def start_selfplay(args, state, threads=None):
 
 
 def ensure_selfplay(args, state, threads):
+    if threads == 0:
+        stop_selfplay(args, state)
+        return
     if storage_ready(args, state):
         if (not alive(state.get("selfplay_pid")) or state.get("selfplay_threads") != threads
                 or state.get("selfplay_options") != search_settings(args)):
@@ -204,9 +209,29 @@ def search_settings(args):
     return load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}})["accepted"]
 
 
-def gate_workers(args, state):
+def search_threads_for(args, item):
+    """Both sides receive the same thread count; it is a test condition, not a tuned setting."""
+    if any(k.lower() == "threads" for k in item["opts"]):
+        raise ValueError("put Threads in common_options so both engines have the same CPU budget")
+    common = item.get("common_options", {})
+    thread_values = [v for k, v in common.items() if k.lower() == "threads"]
+    threads = int(thread_values[0]) if thread_values else 1
+    if len(thread_values) > 1 or not 1 <= threads <= args.cpu_budget:
+        raise ValueError(f"invalid search test thread count: {thread_values}")
+    return threads
+
+
+def selfplay_workers(args, item):
+    reserved = max(args.cpu_budget // 2, search_threads_for(args, item))
+    return min(args.selfplay_threads, args.cpu_budget - reserved)
+
+
+def gate_workers(args, state, threads=1):
     playing = state.get("selfplay_threads", 0) if alive(state.get("selfplay_pid")) else 0
-    return max(1, min(args.concurrency, args.cpu_budget - playing))
+    workers = min(args.concurrency, (args.cpu_budget - playing) // threads)
+    if workers < 1:
+        raise ValueError("search test has no cores available; reduce self-play first")
+    return workers
 
 
 def gate(args, candidate, state, logfile):
@@ -241,14 +266,15 @@ def search_batch(args, state, logfile):
     if not queue["pending"]:
         return
     item = queue["pending"][0]
-    base = search_settings(args)
+    threads = search_threads_for(args, item)
+    base = {**search_settings(args), **item.get("common_options", {})}
     elo0, elo1 = item.get("bounds", [0.0, 5.0])
     identity = local_gate.digest(args.engine)[:12] + "-" + local_gate.digest(state["champion_net"])[:12]
     directory = os.path.join(args.data, "forge", "tests")
     os.makedirs(directory, exist_ok=True)
     name = re.sub(r"[^A-Za-z0-9_.-]", "_", item["name"])
     out = os.path.join(directory, f"local-{name}-{identity}.json")
-    workers = gate_workers(args, state)
+    workers = gate_workers(args, state, threads)
     previous = load_json(out, None)
     search = load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}, "history": []})
     if (previous and previous["decision"] != "running"
@@ -438,7 +464,7 @@ def main():
                 if fresh < args.min_new:
                     queue = load_json(os.path.join(forge_dir, "queue.json"), {"pending": []})
                     testing = args.local_search and bool(queue["pending"]) and args.cpu_budget > 1
-                    threads = min(args.selfplay_threads, max(1, args.cpu_budget // 2)) if testing else args.selfplay_threads
+                    threads = selfplay_workers(args, queue["pending"][0]) if testing else args.selfplay_threads
                     ensure_selfplay(args, state, threads)
                     state["phase"] = "search tests and self-play" if testing else "self-play" if ready else "disk pause"
                     state["positions"] = n

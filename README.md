@@ -142,6 +142,13 @@ evidence. The service restarts after a crash and starts at login. It makes
 progress while the Mac is awake; `status` reports its current phase, fresh
 positions, pending tests and saved gate results.
 
+For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
+(saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
+reduces concurrent games to fit their threads within the remaining CPU budget.
+Common options are recorded with the evidence and are never promoted as tuned
+settings. `smp_vote=1` is an experimental vote among completed main and helper
+searches; its shipped default is zero until a strength test passes.
+
 | Path       | Contents                                             |
 | ---------- | ---------------------------------------------------- |
 | `engine/`  | The engine and library (`arhanpassant` crate)        |

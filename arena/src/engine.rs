@@ -98,6 +98,9 @@ impl Engine {
             let left = deadline.saturating_duration_since(Instant::now());
             match self.rx.recv_timeout(left) {
                 Ok(l) => {
+                    if l.starts_with("info string error:") || l.starts_with("info string unknown option or bad value:") {
+                        return Err(format!("{}: {l}", self.spec.name));
+                    }
                     if pred(&l) {
                         return Ok((l, seen));
                     }
@@ -174,5 +177,36 @@ mod tests {
         assert_eq!(parse_score("info depth 9 score mate 3 pv a1a8"), Some(99_997));
         assert_eq!(parse_score("info depth 9 score mate -2 pv a1a8"), Some(-99_998));
         assert_eq!(parse_score("info string hello"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_rejects_unknown_options_and_reported_network_errors() {
+        use super::{Engine, EngineSpec};
+        use std::os::unix::fs::PermissionsExt;
+        let path = std::env::temp_dir().join(format!("arena-protocol-test-{}.sh", std::process::id()));
+        std::fs::write(&path, r#"#!/bin/sh
+while IFS= read -r line; do
+    case "$line" in
+        uci)
+            printf '%s\n' 'option name Move Overhead type spin default 0 min 0 max 1000' 'option name EvalFile type string default embedded' uciok ;;
+        'setoption name EvalFile value broken') printf '%s\n' 'info string error: failed to load network' ;;
+        'setoption name missing value 1') printf '%s\n' 'info string unknown option or bad value: missing' ;;
+        isready) printf '%s\n' readyok ;;
+        quit) exit 0 ;;
+    esac
+done
+"#).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let spec = |name: &str, value: &str| EngineSpec {
+            name: "fixture".into(), cmd: path.to_string_lossy().into_owned(),
+            options: vec![(name.into(), value.into())], tc: None,
+        };
+        let unknown = Engine::start(&spec("missing", "1")).err().expect("unknown option accepted");
+        assert!(unknown.contains("unknown option or bad value: missing"));
+        let broken = Engine::start(&spec("EvalFile", "broken")).err().expect("network failure ignored");
+        assert!(broken.contains("failed to load network"));
+        drop(Engine::start(&spec("move overhead", "50")).expect("advertised option rejected"));
+        std::fs::remove_file(path).unwrap();
     }
 }

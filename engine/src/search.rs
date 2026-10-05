@@ -1071,7 +1071,10 @@ impl Searcher {
             }
             if self.stopped {
                 // Keep a verified better root move found in the unfinished iteration.
-                if depth > 1 && !self.root_best.0.is_null() {
+                // Voting needs the move, score and PV from one completed
+                // iteration. Preserve the existing partial-move policy when
+                // the experiment is disabled.
+                if depth > 1 && !self.root_best.0.is_null() && !(self.shared_node_budget && p::smp_vote() != 0) {
                     result.best_move = self.root_best.0;
                 }
                 break;
@@ -1162,7 +1165,39 @@ fn score_from_tt(score: i32, ply: usize) -> i32 {
     }
 }
 
-/// Run a (possibly multi-threaded) search and return the main thread's result.
+/// Select among coherent, completed iterations. An interrupted iteration can
+/// change best_move without changing the previous score/PV; it must not vote
+/// using that stale score. Index zero is the main thread and wins exact ties.
+fn voted_result(results: &[SearchResult]) -> usize {
+    let eligible: Vec<_> = results.iter().enumerate().filter(|(_, r)| {
+        r.depth > 0 && !r.best_move.is_null() && r.pv.first() == Some(&r.best_move)
+            && r.score.abs() < INF
+    }).map(|(i, _)| i).collect();
+    if eligible.is_empty() {
+        return 0;
+    }
+    // A completed mating line takes precedence over a centipawn consensus.
+    if let Some(&i) = eligible.iter().filter(|&&i| results[i].score >= MATE_IN_MAX)
+        .max_by_key(|&&i| (results[i].score, results[i].depth, std::cmp::Reverse(i))) {
+        return i;
+    }
+    let min_score = eligible.iter().map(|&i| results[i].score).min().unwrap();
+    let mut selected = eligible[0];
+    let mut best_votes = 0i64;
+    for &i in &eligible {
+        let votes: i64 = eligible.iter().filter(|&&j| results[j].best_move == results[i].best_move)
+            .map(|&j| i64::from(results[j].depth + 1) * i64::from(results[j].score - min_score + 14))
+            .sum();
+        if votes > best_votes || (votes == best_votes && results[i].depth > results[selected].depth) {
+            best_votes = votes;
+            selected = i;
+        }
+    }
+    selected
+}
+
+/// Run a (possibly multi-threaded) search. The optional SMP vote considers
+/// completed helper results; by default the main thread chooses the move.
 pub fn search_threads(
     searchers: &mut [Searcher],
     root: &Position,
@@ -1197,19 +1232,75 @@ pub(crate) fn search_threads_prepared(
         s.shared_node_budget = shared_node_budget;
     }
     let (main, helpers) = searchers.split_first_mut().expect("at least one searcher");
-    let mut result = std::thread::scope(|s| {
+    let mut results = std::thread::scope(|s| {
+        let mut handles = Vec::with_capacity(helpers.len());
         for h in helpers.iter_mut() {
             let lim = Limits { infinite: true, depth: limits.depth, nodes: limits.nodes, ..Default::default() };
-            s.spawn(move || {
+            handles.push(s.spawn(move || {
                 h.verbose = false;
-                h.go(root, history, &lim, false, move_overhead, &mut |_| {});
-            });
+                h.go(root, history, &lim, false, move_overhead, &mut |_| {})
+            }));
         }
         let r = main.go(root, history, limits, true, move_overhead, report);
         shared.stop.store(true, Ordering::Relaxed);
-        r
+        let mut results = vec![r];
+        for h in handles {
+            results.push(h.join().expect("search worker panicked"));
+        }
+        results
     });
+    let selected = if shared_node_budget && p::smp_vote() != 0 { voted_result(&results) } else { 0 };
+    let mut result = results.swap_remove(selected);
     // Helpers flush their final partial batch before their join completes.
     result.nodes = shared.nodes.load(Ordering::Relaxed);
+    if selected != 0 && searchers[0].verbose {
+        report(&SearchInfo {
+            depth: result.depth, seldepth: searchers[selected].seldepth,
+            score: result.score, nodes: result.nodes,
+            time_ms: searchers[0].start.elapsed().as_millis() as u64,
+            hashfull: shared.tt.hashfull(), pv: result.pv.clone(),
+        });
+    }
     result
+}
+
+#[cfg(test)]
+mod voting_tests {
+    use super::*;
+
+    fn result(m: Move, depth: i32, score: i32) -> SearchResult {
+        SearchResult { best_move: m, depth, score, nodes: 1, pv: vec![m] }
+    }
+
+    #[test]
+    fn consensus_can_outvote_one_deeper_search_but_a_stronger_score_can_win() {
+        let moves = Position::startpos().legal_moves();
+        let a = moves[0];
+        let b = moves[1];
+        assert_eq!(voted_result(&[result(a, 8, 0), result(b, 6, 0), result(b, 6, 0)]), 1);
+        assert_eq!(voted_result(&[result(a, 8, 80), result(b, 6, 0), result(b, 6, 0)]), 0);
+        assert_eq!(voted_result(&[result(a, 8, 0), result(b, 8, 0)]), 0);
+    }
+
+    #[test]
+    fn interrupted_or_empty_iterations_do_not_vote_with_stale_scores() {
+        let moves = Position::startpos().legal_moves();
+        let a = moves[0];
+        let b = moves[1];
+        let mut interrupted = result(a, 20, 1000);
+        interrupted.best_move = b;
+        assert_eq!(voted_result(&[interrupted, result(a, 8, 10)]), 1);
+        let mut empty = result(a, 0, 0);
+        empty.pv.clear();
+        assert_eq!(voted_result(&[empty]), 0);
+    }
+
+    #[test]
+    fn completed_mate_beats_centipawn_votes_and_prefers_the_shorter_mate() {
+        let moves = Position::startpos().legal_moves();
+        let a = moves[0];
+        let b = moves[1];
+        assert_eq!(voted_result(&[result(a, 20, 900), result(a, 20, 900), result(b, 8, MATE - 5)]), 2);
+        assert_eq!(voted_result(&[result(a, 10, MATE - 5), result(b, 8, MATE - 3)]), 1);
+    }
 }
