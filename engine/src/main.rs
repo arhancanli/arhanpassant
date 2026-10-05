@@ -27,6 +27,15 @@ fn main() {
             println!("nodes {n} time {s:.3}s nps {:.0}", n as f64 / s);
         }
         Some("datagen") => {
+            for pair in args.windows(2).filter(|p| p[0] == "--set") {
+                let valid = pair[1].split_once('=')
+                    .and_then(|(k, v)| v.parse().ok().map(|v| arhanpassant::params::set(k, v)))
+                    .unwrap_or(false);
+                if !valid {
+                    eprintln!("invalid datagen search setting: {}", pair[1]);
+                    std::process::exit(2);
+                }
+            }
             let num = |name: &str, default: u64| flag(&args, name).and_then(|v| v.parse().ok()).unwrap_or(default);
             let network = match flag(&args, "--net") {
                 Some(path) => Some(Arc::new(Network::load(&path).unwrap_or_else(|e| {
@@ -37,7 +46,7 @@ fn main() {
             };
             let hours: f64 = flag(&args, "--hours").and_then(|v| v.parse().ok()).unwrap_or(0.0);
             let cfg = datagen::Config {
-                threads: num("--threads", 1) as usize,
+                threads: num("--threads", 1).clamp(1, 512) as usize,
                 games: num("--games", 0),
                 soft_nodes: num("--nodes", 5000),
                 hard_nodes: num("--hard-nodes", 100_000),
@@ -45,6 +54,7 @@ fn main() {
                 out_dir: PathBuf::from(flag(&args, "--out").unwrap_or_else(|| "data".into())),
                 seed: num("--seed", 1),
                 hash_mb: num("--hash", 16) as usize,
+                positions_per_file: num("--positions-per-file", 1_000_000),
                 network,
                 duration: (hours > 0.0).then(|| Duration::from_secs_f64(hours * 3600.0)),
             };

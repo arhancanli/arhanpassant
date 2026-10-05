@@ -31,6 +31,8 @@ pub struct Config {
     pub out_dir: PathBuf,
     pub seed: u64,
     pub hash_mb: usize,
+    /// Rotate completed training chunks after this many positions; 0 disables rotation.
+    pub positions_per_file: u64,
     pub network: Option<Arc<Network>>,
     /// Stop after this long; None means no limit.
     pub duration: Option<Duration>,
@@ -293,6 +295,9 @@ pub fn rescore(lines: &[String], soft_nodes: u64, threads: usize, hash_mb: usize
 
 /// Generate self-play data until the game or time budget is spent.
 pub fn run(cfg: Config) -> std::io::Result<()> {
+    if cfg.threads == 0 {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "datagen needs at least one thread"));
+    }
     std::fs::create_dir_all(&cfg.out_dir)?;
     let games = Arc::new(AtomicU64::new(0));
     let positions = Arc::new(AtomicU64::new(0));
@@ -303,8 +308,18 @@ pub fn run(cfg: Config) -> std::io::Result<()> {
         let cfg = cfg.clone();
         let (games, positions, done) = (games.clone(), positions.clone(), done.clone());
         handles.push(std::thread::Builder::new().stack_size(64 << 20).spawn(move || -> std::io::Result<()> {
-            let path = cfg.out_dir.join(format!("{:016x}-t{tid:02}.bin", cfg.seed));
-            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+            let path = |chunk| cfg.out_dir.join(if cfg.positions_per_file == 0 {
+                format!("{:016x}-t{tid:02}.bin", cfg.seed)
+            } else {
+                format!("{:016x}-t{tid:02}-{chunk:06}.bin", cfg.seed)
+            });
+            let mut chunk = 0;
+            let mut file = if cfg.positions_per_file == 0 {
+                OpenOptions::new().create(true).append(true).open(path(chunk))?
+            } else {
+                OpenOptions::new().create_new(true).write(true).open(path(chunk))?
+            };
+            let mut chunk_positions = 0;
             let mut rng = Rng(cfg.seed ^ (tid as u64 + 1).wrapping_mul(0xA24B_AED4_963E_E407));
             let shared = Shared::new(cfg.hash_mb, cfg.network.clone());
             let mut s = Searcher::new(shared);
@@ -316,10 +331,17 @@ pub fn run(cfg: Config) -> std::io::Result<()> {
                         buf.extend_from_slice(r);
                     }
                     file.write_all(&buf)?;
+                    chunk_positions += records.len() as u64;
                     positions.fetch_add(records.len() as u64, Ordering::Relaxed);
                     let g = games.fetch_add(1, Ordering::Relaxed) + 1;
                     if cfg.games > 0 && g >= cfg.games {
                         done.store(true, Ordering::Relaxed);
+                    }
+                    if cfg.positions_per_file > 0 && chunk_positions >= cfg.positions_per_file {
+                        file.flush()?;
+                        chunk += 1;
+                        file = OpenOptions::new().create_new(true).write(true).open(path(chunk))?;
+                        chunk_positions = 0;
                     }
                 }
                 if let Some(d) = cfg.duration {
@@ -334,6 +356,11 @@ pub fn run(cfg: Config) -> std::io::Result<()> {
     let mut last = Instant::now();
     while !done.load(Ordering::Relaxed) {
         std::thread::sleep(Duration::from_millis(200));
+        // An I/O failure in a worker must reach the caller instead of leaving
+        // the monitor (and every other worker) running forever.
+        if handles.iter().any(|h| h.is_finished()) {
+            done.store(true, Ordering::Relaxed);
+        }
         if last.elapsed() >= Duration::from_secs(30) {
             last = Instant::now();
             let secs = start.elapsed().as_secs_f64();
@@ -365,6 +392,37 @@ pub fn run(cfg: Config) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config(name: &str) -> Config {
+        Config {
+            threads: 1, games: 2, soft_nodes: 32, hard_nodes: 64, random_plies: 0,
+            out_dir: std::env::temp_dir().join(format!("ap-datagen-{name}-{}", std::process::id())),
+            seed: 23, hash_mb: 1, positions_per_file: 1, network: None, duration: None,
+        }
+    }
+
+    #[test]
+    fn rotates_at_game_boundaries_without_partial_records() {
+        let cfg = test_config("rotation");
+        let out = cfg.out_dir.clone();
+        run(cfg).unwrap();
+        let files: Vec<_> = std::fs::read_dir(&out).unwrap().map(|f| f.unwrap().path()).collect();
+        let nonempty = files.iter().filter(|f| std::fs::metadata(f).unwrap().len() > 0).count();
+        assert_eq!(nonempty, 2);
+        for path in files {
+            assert_eq!(std::fs::metadata(path).unwrap().len() % RECORD_SIZE as u64, 0);
+        }
+        std::fs::remove_dir_all(out).unwrap();
+    }
+
+    #[test]
+    fn a_worker_file_error_stops_the_generator() {
+        let cfg = test_config("error");
+        let out = cfg.out_dir.clone();
+        std::fs::create_dir_all(out.join("0000000000000017-t00-000000.bin")).unwrap();
+        assert!(run(cfg).is_err());
+        std::fs::remove_dir_all(out).unwrap();
+    }
 
     #[test]
     fn record_roundtrip() {

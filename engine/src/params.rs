@@ -84,4 +84,6 @@ tunables! {
     lmr_ttcap: 0, 0, 1;           // reduce quiet moves one more ply when the table's move is a capture
     cont4: 0, 0, 1;               // continuation history also keyed by our own move two turns ago
     corr_joint: 0, 0, 1;          // correction tables learn jointly (each toward what the others leave), not each the whole error
+    smp_vote: 0, 0, 1;            // experimental: choose a move using completed searches from every worker
+    cap_checks: 0, 0, 1;          // experimental: order losing checking captures before quiet moves
 }

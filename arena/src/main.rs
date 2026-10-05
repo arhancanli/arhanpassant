@@ -207,8 +207,10 @@ fn wrap_nice(spec: &EngineSpec, nice: Option<i32>) -> EngineSpec {
     // Run through `nice` so matches yield to interactive work.
     match nice {
         Some(n) => {
-            let wrapper = std::env::temp_dir().join(format!("arena-nice-{}-{}.sh", n, spec.name.replace(['/', ' '], "_")));
-            let script = format!("#!/bin/sh\nexec nice -n {n} '{}'\n", spec.cmd);
+            static NEXT_WRAPPER: AtomicUsize = AtomicUsize::new(0);
+            let wrapper = std::env::temp_dir().join(format!("arena-nice-{}-{}.sh", std::process::id(), NEXT_WRAPPER.fetch_add(1, Ordering::Relaxed)));
+            let quoted = spec.cmd.replace('\'', "'\"'\"'");
+            let script = format!("#!/bin/sh\nexec nice -n {n} '{quoted}'\n");
             std::fs::write(&wrapper, script).expect("write nice wrapper");
             #[cfg(unix)]
             {
@@ -340,6 +342,11 @@ fn main() {
     }
     for w in workers {
         let _ = w.join();
+    }
+    if args.nice.is_some() {
+        for spec in &specs {
+            let _ = std::fs::remove_file(&spec.cmd);
+        }
     }
 
     let st = stats.lock().unwrap();

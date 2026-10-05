@@ -46,7 +46,7 @@ def main():
         f"It is the {ordinal(networks)} network in a row to pass the gate against its predecessor; every promotion is "
         "recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.",
         "",
-        f"Search changes are tested the same way, on a fleet of cloud machines: {len(passed)} passed and ship "
+        f"Search changes are tested the same way, locally or on the cloud fleet: {len(passed)} were accepted "
         f"({', '.join(NAMES.get(t['name'], t['name']) for t in passed)}), and {len(failed)} did not. Every result, "
         "including the failures, is in [`forge/tests.json`](forge/tests.json).",
         "",

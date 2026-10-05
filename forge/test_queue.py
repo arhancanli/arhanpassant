@@ -5,7 +5,7 @@ that passes (H1) joins them, so later tests build on it. Networks are not
 handled here: the forge loop trains, gates and promotes those, and both share
 the fleet by taking turns (forge/fleet.py waits for a running gate to finish).
 
-    python forge/test_queue.py add NAME "what it changes" opt=value [opt=value ...] [bounds=-5,0]
+    python forge/test_queue.py add NAME "what it changes" opt=value [common.Threads=3] [bounds=-5,0]
     python forge/test_queue.py run          # keeps running; picks up new items
     python forge/test_queue.py show
 
@@ -20,7 +20,6 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import fleet_test  # noqa: E402
 import publish_data  # noqa: E402
 
 FORGE = os.path.expanduser("~/arhanpassant-data/forge")
@@ -50,7 +49,16 @@ def accepted():
 def add(name, change, opts):
     """Queue a change. bounds=ELO0,ELO1 overrides the default [0, 5]; [-5, 0] asks
     "does it at least not lose strength?" for a change whose value lies elsewhere."""
+    opts = dict(opts)
+    common = {k.removeprefix("common."): opts.pop(k) for k in list(opts) if k.startswith("common.")}
+    if any(k.lower() == "threads" for k in opts):
+        raise ValueError("use common.Threads so both engines have the same thread count")
     item = {"name": name, "change": change, "opts": opts}
+    for key in ("candidate_engine", "baseline_engine"):
+        if key in opts:
+            item[key] = opts.pop(key)
+    if common:
+        item["common_options"] = common
     if "bounds" in opts:
         item["bounds"] = [float(x) for x in opts.pop("bounds").split(",")]
     q = load(QUEUE, {"pending": [], "done": []})
@@ -59,6 +67,7 @@ def add(name, change, opts):
 
 
 def run():
+    import fleet_test
     said_idle = False
     while True:
         q = load(QUEUE, {"pending": [], "done": []})
@@ -70,7 +79,9 @@ def run():
             continue
         said_idle = False
         item = q["pending"][0]
-        base = accepted()
+        if "candidate_engine" in item or "baseline_engine" in item:
+            raise ValueError("binary comparison entries require the local forge controller; fleet tests select builds remotely")
+        base = {**accepted(), **item.get("common_options", {})}
         elo0, elo1 = item.get("bounds", [0.0, 5.0])
         entry = fleet_test.run_test(item["name"], item["change"], {**base, **item["opts"]}, dict(base), elo0=elo0, elo1=elo1)
         q = load(QUEUE, {"pending": [], "done": []})  # re-read: items may have been added meanwhile
@@ -96,7 +107,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     cmd = sys.argv[1:2]
     if cmd == ["add"] and len(sys.argv) >= 5:
-        add(sys.argv[2], sys.argv[3], fleet_test.options(sys.argv[4:]))
+        add(sys.argv[2], sys.argv[3], dict(pair.split("=", 1) for pair in sys.argv[4:]))
     elif cmd == ["run"]:
         run()
     elif cmd == ["show"]:

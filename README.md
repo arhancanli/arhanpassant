@@ -21,9 +21,11 @@ minutes.
 
 ## Status
 
-Version 0.9.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 295.0M self-play positions. It is the 8th network in a row to pass the gate against its predecessor; every promotion is recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.
+Version 0.12.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 381.8M self-play positions. It passed its predecessor in 2,560 paired games at 8+0.08, gaining an estimated 12.4 Elo (95% interval 4.6 to 20.2). It is the 11th network in a row to pass the gate; every promotion is recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.
 
-Search changes are tested the same way, on a fleet of cloud machines: 6 passed and ship (node-based time management, pawn-structure evaluation correction, piece-set evaluation correction, deeper/shallower re-searches, mop-up endgame knowledge, a history bonus for the move that made the opponent fail low), and 7 did not. Every result, including the failures, is in [`forge/tests.json`](forge/tests.json).
+Search changes are tested the same way, locally or on the cloud fleet: 6 were accepted (node-based time management, pawn-structure evaluation correction, piece-set evaluation correction, deeper/shallower re-searches, mop-up endgame knowledge, a history bonus for the move that made the opponent fail low), and 7 did not. Every result, including the failures, is in [`forge/tests.json`](forge/tests.json).
+
+On Apple Silicon, the exact NEON neural output kernel measured 59.9% more nodes per second than the preceding optimized scalar build in nine alternating warmed benchmark runs per build. At the same 8+0.08 time control and with the same 0.12 network, it also passed a separate strength gate in 448 games: an estimated +80.5 Elo (95% interval +63.2 to +98.3). Both executable hashes and the test result are recorded in [`forge/tests.json`](forge/tests.json).
 
 **Measured strength: about 3,426 on the CCRL Blitz scale** (95% interval 3,414 to 3,437 from game statistics alone), from 2,284 games at 60+0.6 against 8 versions of Demolito, Ethereal, Laser, Stash and Weiss with published CCRL Blitz ratings: each opponent's rating is read from the CCRL list and one rating is fitted to the 6 matches the engine scores 20-80% in; at 10+0.1, 5,200 games give 3,448 (3,436 to 3,459). Stronger engines are too far ahead to rate against: Stockfish 17.1 (CCRL 3,771) 3.9% of 400 games, Koivisto 9.0 (CCRL 3,632) 10.6% of 400 games. The matches ran before the last search changes were accepted. These are our own matches on cloud machines, not an official CCRL rating, and the opponents' own ratings carry another 10-20 Elo of uncertainty. Details: [`forge/engines.json`](forge/engines.json).
 
@@ -112,6 +114,97 @@ calibration test.
 ```
 
 ## Repository
+
+On macOS, keep self-play, training, network gates and the queued search
+experiments running under a supervised service:
+
+```sh
+python3 forge/macbook.py install --cpu-budget 18 --min-new 20000000
+python3 forge/macbook.py status
+python3 forge/test_queue.py add NAME "change description" parameter=value
+python3 forge/macbook.py stop
+python3 forge/macbook.py start
+```
+
+This profile uses all 18 cores of the owner's Mac and starts a new training
+round after 20 million fresh positions. If a search gate already has completed
+pairs, it finishes that gate before training can change the network; a queued
+test that has not started does not delay training. Other Macs can choose their own budget;
+omitting it reserves two cores. While search tests
+are pending, half the budget generates self-play and the rest plays test
+games. Network gates pause self-play and use the full budget; training uses
+Metal when available and eight parallel record decoders. Local gates save
+completed pairs every 64 games and resume after a restart. A build, network,
+book, settings or execution profile change starts a separate gate. Only a passed gate promotes
+a network or accepts search settings; the settings also apply to self-play.
+
+Self-play rotates into chunks of about one million positions. The controller
+limits generated data to 14 GiB and pauses generation below 8 GiB of free
+disk space. It retires only complete generated chunks that were included in
+a successful training round, preserving untrained data, networks and match
+evidence. The service restarts after a crash and starts at login. It prevents
+idle sleep with a macOS assertion owned by the controller; stopping the service
+releases it, and the display can still sleep. Pass `--allow-idle-sleep` when
+installing to omit this assertion. Manual sleep and closing the lid can still
+pause work. `status` reports idle-sleep protection, its current phase, fresh
+positions, pending tests and saved gate results.
+
+Milestone matches cover every version in the existing opponent suite plus
+full-strength Stockfish 19: Stockfish 17.1, Koivisto 9.0, Demolito 2021,
+Ethereal 12.00, Laser 1.7, Stash 28/31/34/37 and Weiss 1.2/1.3/1.4/2.0.
+Prepare them on the Mac with the forge stopped, then reinstall its profile:
+
+```sh
+python3 forge/macbook.py stop
+python3 forge/opponents.py --jobs 18
+python3 forge/macbook.py install --cpu-budget 18 --min-new 20000000
+```
+
+The verified catalog enables milestone testing automatically. Each changed
+champion network, executable or accepted settings creates a saved snapshot.
+The controller alternates external batches with search batches within the
+same CPU budget, using one thread and 64 MB hash on both sides. Each opponent
+plays 200 games at 10+0.1 and 100 at 60+0.6, with colours reversed per opening.
+Completed batches and game records survive restarts; a later promotion keeps
+earlier unfinished suites. Results live in `DATA/forge/milestones/`, with
+pair-based conservative 95% score intervals. These matches measure outside
+opposition; the existing SPRT gates decide promotions. Historical cloud ratings
+are not extrapolated from these Mac results.
+
+Analyse saved losses with `forge/blunders.py` using the dependencies in
+`forge/requirements-analysis.txt`. It compares Stockfish's preferred move
+with the played move from the same position, at equal node limits and with
+fresh search state. A preferred move has zero estimated loss; restricted
+searches that disagree with the recommendation are counted separately.
+Saved reports include input hashes and the reference build. These diagnostics
+guide experiments; they do not establish a strength gain or replace match gates.
+After every opponent has a completed initial batch, and again after the full
+suite finishes, the controller reviews up to 32 saved losses with Stockfish 19.
+The review replaces one external batch slot and uses its available cores beside
+self-play. It freezes game records, the reference binary and the analysis code;
+completed reviews survive restarts. Reports and bounded failure retries live in
+the milestone's `diagnostics/` folder. Pass `--loss-analysis-sample 0` to the loop
+to disable reviews, or another sample size to change their budget.
+
+For a network-capacity experiment, append `--train-hidden 1024` when installing
+the Mac profile. The next training round uses that width and the normal gate
+compares the candidate with the current champion before any promotion. Omit
+the option to choose capacity from the retained dataset size. This makes larger
+models testable without expanding the self-play storage budget.
+
+For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
+(saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
+reduces concurrent games to fit their threads within the remaining CPU budget.
+Common options are recorded with the evidence and are never promoted as tuned
+settings. `smp_vote=1` is an experimental vote among completed main and helper
+searches; its shipped default is zero until a strength test passes.
+
+To compare executable changes locally, a queue entry can set `candidate_engine`
+and `baseline_engine` (also accepted by `test_queue.py add`). Both sides use
+the same champion network and accepted settings. The result records the hash
+of each executable, and changing either starts a separate test. The Apple
+Silicon neural output kernel uses NEON with exact i64 reduction; full evaluation
+retains the scalar reference, and other architectures use the portable path.
 
 | Path       | Contents                                             |
 | ---------- | ---------------------------------------------------- |
