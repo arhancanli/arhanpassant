@@ -192,6 +192,24 @@ compares the candidate with the current champion before any promotion. Omit
 the option to choose capacity from the retained dataset size. This makes larger
 models testable without expanding the self-play storage budget.
 
+`trainer/teacher.py` creates an experimental paired corpus using full-strength,
+single-thread Stockfish searches. Reserve its worker cores within the CPU budget
+and use a frozen state file. The legacy records omit repetition history, castling
+rights and en-passant state, so the sampler uses only unambiguous positions after
+an irreversible move. It preserves boards, clocks and game outcomes, replacing
+only the White-relative score bytes in a separate output directory.
+
+Choose `--target-mode raw-cp` to audit Stockfish's normalized centipawn scores, or
+`--target-mode wdl` to encode its expected points (win plus half a draw) on the
+trainer's `sigmoid(score / 400)` scale. These scales are different. The WDL model
+describes Stockfish self-play at its reference time control, not a measured
+ArhanPassant win probability. Each label keeps the last complete, unbounded
+iteration's score, WDL, depth, nodes and legal PV together; the final raw bound is
+retained separately. Reports record input provenance and hashes. Before comparing
+models, split by board and side to move, use identical rows and training resources,
+and require a fresh strength gate. This tool does not alter live self-play or
+promote a network.
+
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
 reduces concurrent games to fit their threads within the remaining CPU budget.
