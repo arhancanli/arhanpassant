@@ -118,3 +118,44 @@ fn smp_vote_returns_a_legal_move_and_matching_legal_pv() {
         }
     }
 }
+
+#[test]
+fn quiescence_checks_obey_node_limits_and_stop_in_forcing_positions() {
+    let mut engine = Engine::new();
+    for (checks, sacrifices) in [(1, 0), (2, 1)] {
+        engine.send(&format!("setoption name qs_checks value {checks}\nsetoption name qs_check_see value {sacrifices}"));
+        for fen in [
+            "6rk/2R2Qp1/pPNq1n1p/P3p3/7P/6P1/5P2/r4BK1 w - - 1 31",
+            "r2qnrk1/pb2bppp/1p2p3/n2pP3/3p1B1P/P1NB1Q1N/1PP2PP1/2KR3R b - - 1 6",
+            "7k/5Q2/6K1/8/8/8/8/8 w - - 0 1",
+        ] {
+            engine.send(&format!("ucinewgame\nposition fen {fen}\ngo nodes 16000"));
+            let end = Instant::now() + Duration::from_secs(5);
+            let mut reported = false;
+            loop {
+                let line = engine.lines.recv_timeout(end.saturating_duration_since(Instant::now())).unwrap();
+                assert!(!line.contains("unknown option") && !line.contains("error:"), "{line}");
+                if let Some((_, pv)) = line.split_once(" pv ") {
+                    reported = true;
+                    let mut pos = Position::from_fen(fen).unwrap();
+                    for uci in pv.split_whitespace() {
+                        let m = pos.parse_uci_move(uci).unwrap_or_else(|| panic!("illegal PV move {uci}"));
+                        pos.play(m);
+                    }
+                    let words: Vec<_> = line.split_whitespace().collect();
+                    let i = words.iter().position(|w| *w == "nodes").unwrap();
+                    assert!(words[i + 1].parse::<u64>().unwrap() <= 16000);
+                }
+                if let Some(best) = line.strip_prefix("bestmove ") {
+                    assert!(reported);
+                    assert!(Position::from_fen(fen).unwrap().parse_uci_move(best.split_whitespace().next().unwrap()).is_some());
+                    break;
+                }
+            }
+            engine.send("go infinite");
+            engine.until("info depth ", Duration::from_secs(3));
+            engine.send("stop");
+            engine.until("bestmove ", Duration::from_secs(3));
+        }
+    }
+}
