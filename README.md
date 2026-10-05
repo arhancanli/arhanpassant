@@ -149,6 +149,28 @@ installing to omit this assertion. Manual sleep and closing the lid can still
 pause work. `status` reports idle-sleep protection, its current phase, fresh
 positions, pending tests and saved gate results.
 
+Milestone matches cover every version in the existing opponent suite plus
+full-strength Stockfish 19: Stockfish 17.1, Koivisto 9.0, Demolito 2021,
+Ethereal 12.00, Laser 1.7, Stash 28/31/34/37 and Weiss 1.2/1.3/1.4/2.0.
+Prepare them on the Mac with the forge stopped, then reinstall its profile:
+
+```sh
+python3 forge/macbook.py stop
+python3 forge/opponents.py --jobs 18
+python3 forge/macbook.py install --cpu-budget 18 --min-new 20000000
+```
+
+The verified catalog enables milestone testing automatically. Each changed
+champion network, executable or accepted settings creates a saved snapshot.
+The controller alternates external batches with search batches within the
+same CPU budget, using one thread and 64 MB hash on both sides. Each opponent
+plays 200 games at 10+0.1 and 100 at 60+0.6, with colours reversed per opening.
+Completed batches and game records survive restarts; a later promotion keeps
+earlier unfinished suites. Results live in `DATA/forge/milestones/`, with
+pair-based conservative 95% score intervals. These matches measure outside
+opposition; the existing SPRT gates decide promotions. Historical cloud ratings
+are not extrapolated from these Mac results.
+
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
 reduces concurrent games to fit their threads within the remaining CPU budget.

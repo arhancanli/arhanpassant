@@ -34,6 +34,9 @@ def profile(data, cpu_budget, min_new, no_publish=False, keep_awake=True):
         cmd.append("--no-publish")
     if keep_awake:
         cmd.append("--keep-awake")
+    catalog = data / "opponents/catalog.json"
+    if catalog.is_file():
+        cmd.extend(["--milestone-catalog", str(catalog)])
     return {"Label": LABEL, "ProgramArguments": cmd, "WorkingDirectory": str(ROOT),
             "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 30,
             # launchd's Background and Standard classes throttle sustained
@@ -97,6 +100,10 @@ def status(data):
            "pending_network": state.get("pending"), "error": state.get("error")}
     if state.get("training_deferred_for"):
         out["training_deferred_for"] = state["training_deferred_for"]
+    if state.get("external_milestone"):
+        out["external_milestone"] = state["external_milestone"]
+    if state.get("activity"):
+        out["activity"] = state["activity"]
     if state.get("pending"):
         candidate = pathlib.Path(state["pending"]["candidate"]).name
         result = read(data / "forge" / f"sprt-{candidate}.json", {})

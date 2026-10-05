@@ -26,6 +26,7 @@ import sys
 import time
 
 import local_gate
+import milestones
 import publish_data
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -463,6 +464,7 @@ def main():
     ap.add_argument("--train-threads", type=int, default=4)
     ap.add_argument("--no-publish", action="store_true", help="keep promotion and search ledgers local")
     ap.add_argument("--keep-awake", action="store_true", help="prevent macOS idle sleep for this controller's lifetime")
+    ap.add_argument("--milestone-catalog", help="verified local opponents; alternate milestone matches with search gates")
     args = ap.parse_args()
     if args.keep_awake and sys.platform != "darwin":
         ap.error("--keep-awake requires macOS caffeinate")
@@ -505,12 +507,17 @@ def run_controller(args, forge_dir):
                             "change": args.gate_first_change or "NNUE network"}
     log(f"controller started: CPU budget {args.cpu_budget}, self-play up to {args.selfplay_threads}, "
         f"gate concurrency {args.concurrency}, local search {args.local_search}")
+    if args.milestone_catalog and args.cpu_budget < 2:
+        raise ValueError("milestone matches need a CPU budget of at least two")
     try:
         while True:
             state["updated"] = dt.datetime.now(dt.timezone.utc).isoformat()
             try:
                 state.pop("error", None)
                 state.pop("training_deferred_for", None)
+                state.pop("activity", None)
+                if args.milestone_catalog and state.get("champion_net"):
+                    milestones.enqueue(args, state, search_settings(args))
                 if state.get("pending"):
                     stop_selfplay(args, state)
                     state["phase"] = "network gate"
@@ -534,12 +541,16 @@ def run_controller(args, forge_dir):
                 fresh = grown_since(files, state["sizes"]) if "sizes" in state else n - state["trained_on"]
                 queue = load_json(os.path.join(forge_dir, "queue.json"), {"pending": []})
                 testing = args.local_search and bool(queue["pending"]) and args.cpu_budget > 1
+                external = bool(args.milestone_catalog and milestones.pending(args.data))
                 finish_search = (fresh >= args.min_new and testing
                                  and search_has_progress(args, state, queue["pending"][0], ready))
                 if fresh < args.min_new or finish_search:
-                    threads = selfplay_workers(args, queue["pending"][0]) if testing else args.selfplay_threads
+                    threads = (selfplay_workers(args, queue["pending"][0]) if testing else
+                               min(args.selfplay_threads, args.cpu_budget - max(1, args.cpu_budget // 2))
+                               if external else args.selfplay_threads)
                     ensure_selfplay(args, state, threads)
-                    state["phase"] = "search tests and self-play" if testing else "self-play" if ready else "disk pause"
+                    state["phase"] = ("search tests and self-play" if testing else "milestone matches and self-play"
+                                      if external else "self-play" if ready else "disk pause")
                     state["positions"] = n
                     state["fresh_positions"] = fresh
                     if finish_search:
@@ -550,9 +561,15 @@ def run_controller(args, forge_dir):
                         log(f"training ready; finishing existing search test {state['training_deferred_for']} first")
                     if testing:
                         search_batch(args, state, logfile)
+                    if external:
+                        state["activity"] = "external milestone matches"
+                        save_json(state_path, state)
+                        milestones.advance(args, state, gate_workers(args, state), logfile, log)
+                        state.pop("activity", None)
+                        save_json(state_path, state)
                     if args.once:
                         return
-                    if not testing:
+                    if not testing and not external:
                         time.sleep(args.poll_seconds)
                     continue
 
