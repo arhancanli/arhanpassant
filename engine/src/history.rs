@@ -88,6 +88,7 @@ impl History {
             + self.cont_score(c4, piece, m.to())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_quiet(&mut self, stm: Color, piece: Piece, m: Move, c1: ContKey, c2: ContKey, c4: ContKey, bonus: i32) {
         gravity(&mut self.butterfly[stm.idx()][m.from() as usize][m.to() as usize], bonus);
         for c in [c1, c2, c4] {

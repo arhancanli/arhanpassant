@@ -13,7 +13,7 @@ use crate::syzygy::{self, Wdl};
 use crate::tt::*;
 use crate::types::*;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use crate::time::Instant;
 use std::time::Duration;
 
@@ -102,6 +102,7 @@ pub struct Shared {
     pub network: Option<Arc<Network>>,
     /// Set while a `go ponder` search waits for `ponderhit`: no time limit stops it.
     pub pondering: AtomicBool,
+    ponder_hit: Mutex<Option<Instant>>,
 }
 
 impl Shared {
@@ -112,7 +113,23 @@ impl Shared {
             nodes: AtomicU64::new(0),
             network,
             pondering: AtomicBool::new(false),
+            ponder_hit: Mutex::new(None),
         })
+    }
+
+    /// Prepare before spawning the UCI search so an immediate stop or ponderhit
+    /// cannot be overwritten by the new search thread.
+    pub(crate) fn prepare(&self, limits: &Limits) {
+        self.stop.store(false, Ordering::Relaxed);
+        self.nodes.store(0, Ordering::Relaxed);
+        *self.ponder_hit.lock().unwrap() = None;
+        self.pondering.store(limits.ponder, Ordering::Release);
+        self.tt.new_search();
+    }
+
+    pub(crate) fn ponderhit(&self) {
+        *self.ponder_hit.lock().unwrap() = Some(Instant::now());
+        self.pondering.store(false, Ordering::Release);
     }
 }
 
@@ -127,8 +144,11 @@ pub struct Searcher {
     flushed_nodes: u64,
     seldepth: usize,
     start: Instant,
+    time_start: Instant,
+    was_pondering: bool,
     hard_deadline: Option<Instant>,
     hard_nodes: Option<u64>,
+    shared_node_budget: bool,
     stopped: bool,
     main_thread: bool,
     root_best: (Move, i32),
@@ -158,8 +178,11 @@ impl Searcher {
             flushed_nodes: 0,
             seldepth: 0,
             start: Instant::now(),
+            time_start: Instant::now(),
+            was_pondering: false,
             hard_deadline: None,
             hard_nodes: None,
+            shared_node_budget: false,
             stopped: false,
             main_thread: true,
             root_best: (Move::NULL, -INF),
@@ -249,6 +272,25 @@ impl Searcher {
         self.hashes.pop();
     }
 
+    fn update_ponder_time(&mut self) {
+        if self.was_pondering && !self.shared.pondering.load(Ordering::Acquire) {
+            let hit = self.shared.ponder_hit.lock().unwrap().unwrap_or_else(Instant::now);
+            if let Some(deadline) = self.hard_deadline {
+                self.hard_deadline = Some(hit + deadline.duration_since(self.time_start));
+            }
+            self.time_start = hit;
+            self.was_pondering = false;
+        }
+    }
+
+    fn searched_nodes(&self) -> u64 {
+        if self.shared_node_budget {
+            self.shared.nodes.load(Ordering::Relaxed) + self.nodes - self.flushed_nodes
+        } else {
+            self.nodes
+        }
+    }
+
     #[inline(always)]
     fn check_stop(&mut self) -> bool {
         if self.stopped {
@@ -256,19 +298,25 @@ impl Searcher {
         }
         if self.nodes & 1023 == 0 {
             let delta = self.nodes - self.flushed_nodes;
-            self.shared.nodes.fetch_add(delta, Ordering::Relaxed);
+            let total = self.shared.nodes.fetch_add(delta, Ordering::Relaxed) + delta;
             self.flushed_nodes = self.nodes;
+            if self.shared_node_budget && self.hard_nodes.is_some_and(|n| total >= n) {
+                self.shared.stop.store(true, Ordering::Relaxed);
+            }
             if self.shared.stop.load(Ordering::Relaxed) {
                 self.stopped = true;
-            } else if self.main_thread && !self.shared.pondering.load(Ordering::Relaxed) {
-                if let Some(d) = self.hard_deadline {
-                    if Instant::now() >= d {
-                        self.stopped = true;
+            } else if self.main_thread {
+                self.update_ponder_time();
+                if !self.shared.pondering.load(Ordering::Acquire) {
+                    if let Some(d) = self.hard_deadline {
+                        if Instant::now() >= d {
+                            self.stopped = true;
+                        }
                     }
                 }
             }
         }
-        if self.main_thread {
+        if self.main_thread && !self.shared_node_budget {
             if let Some(n) = self.hard_nodes {
                 if self.nodes >= n {
                     self.stopped = true;
@@ -958,6 +1006,8 @@ impl Searcher {
         report: &mut dyn FnMut(&SearchInfo),
     ) -> SearchResult {
         self.start = Instant::now();
+        self.time_start = self.start;
+        self.was_pondering = main_thread && limits.ponder;
         self.main_thread = main_thread;
         self.stopped = false;
         self.nodes = 0;
@@ -992,6 +1042,9 @@ impl Searcher {
         let max_depth = limits.depth.unwrap_or(MAX_PLY as i32 - 1).clamp(1, MAX_PLY as i32 - 1);
         let mut score = 0;
         for depth in 1..=max_depth {
+            if self.shared.stop.load(Ordering::Relaxed) {
+                break;
+            }
             self.seldepth = 0;
             self.root_best = (Move::NULL, -INF);
             // Aspiration windows.
@@ -1047,9 +1100,12 @@ impl Searcher {
                 });
             }
             // While pondering, only `ponderhit` (then the limits below) or `stop` ends the search.
-            if main_thread && !self.shared.pondering.load(Ordering::Relaxed) {
+            if main_thread {
+                self.update_ponder_time();
+            }
+            if main_thread && !self.shared.pondering.load(Ordering::Acquire) {
                 if let Some(sn) = limits.soft_nodes {
-                    if self.nodes >= sn {
+                    if self.searched_nodes() >= sn {
                         break;
                     }
                 }
@@ -1063,7 +1119,7 @@ impl Searcher {
                         limit *= (p::tm_node_base() as f64 / 100.0 - frac) * p::tm_node_mult() as f64 / 100.0;
                         limit *= STABILITY[stability.min(4)];
                     }
-                    if self.start.elapsed().as_secs_f64() * 1000.0 >= limit {
+                    if self.time_start.elapsed().as_secs_f64() * 1000.0 >= limit {
                         break;
                     }
                 }
@@ -1115,33 +1171,45 @@ pub fn search_threads(
     move_overhead: u64,
     report: &mut (dyn FnMut(&SearchInfo) + Send),
 ) -> SearchResult {
+    searchers[0].shared.prepare(limits);
+    search_threads_prepared(searchers, root, history, limits, move_overhead, report)
+}
+
+pub(crate) fn search_threads_prepared(
+    searchers: &mut [Searcher],
+    root: &Position,
+    history: &[u64],
+    limits: &Limits,
+    move_overhead: u64,
+    report: &mut (dyn FnMut(&SearchInfo) + Send),
+) -> SearchResult {
     let shared = searchers[0].shared.clone();
-    shared.stop.store(false, Ordering::Relaxed);
-    shared.pondering.store(limits.ponder, Ordering::Relaxed);
-    shared.nodes.store(0, Ordering::Relaxed);
-    shared.tt.new_search();
     // Root tablebase filter, probed once here: the distance-to-zero probe is not thread-safe.
     let allowed = if syzygy::probeable(root, syzygy::probe_limit()) { syzygy::root_moves(root) } else { None };
     if let (Some((w, moves)), true) = (&allowed, searchers[0].verbose) {
         println!("info string tablebase root {w:?}, {} of {} moves kept", moves.len(), root.legal_moves().len());
     }
     let allowed = allowed.map(|(_, m)| m).unwrap_or_default();
+    let shared_node_budget = searchers.len() > 1;
     for s in searchers.iter_mut() {
         s.root_allowed = allowed.clone();
         s.tb_hits = 0;
+        s.shared_node_budget = shared_node_budget;
     }
     let (main, helpers) = searchers.split_first_mut().expect("at least one searcher");
-    std::thread::scope(|s| {
+    let mut result = std::thread::scope(|s| {
         for h in helpers.iter_mut() {
-            let lim = Limits { infinite: true, depth: limits.depth, ..Default::default() };
+            let lim = Limits { infinite: true, depth: limits.depth, nodes: limits.nodes, ..Default::default() };
             s.spawn(move || {
                 h.verbose = false;
                 h.go(root, history, &lim, false, move_overhead, &mut |_| {});
             });
         }
-        let mut r = main.go(root, history, limits, true, move_overhead, report);
+        let r = main.go(root, history, limits, true, move_overhead, report);
         shared.stop.store(true, Ordering::Relaxed);
-        r.nodes = shared.nodes.load(Ordering::Relaxed);
         r
-    })
+    });
+    // Helpers flush their final partial batch before their join completes.
+    result.nodes = shared.nodes.load(Ordering::Relaxed);
+    result
 }

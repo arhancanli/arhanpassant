@@ -13,17 +13,18 @@ Targets blend the search score and the game result.
 
 import argparse
 import glob
+import json
 import math
 import os
-import queue
 import struct
 import sys
-import threading
 import time
 
 import numpy as np
 import torch
 import torch.nn as nn
+
+from stream import prefetch, prepare_file_limit
 
 REC = 32
 QA, QB, SCALE = 255, 64, 400.0
@@ -64,17 +65,18 @@ class Dataset:
     in every run and never mixes with training.
     """
 
-    def __init__(self, paths, val_every=100, max_positions=0):
+    def __init__(self, paths, val_every=100, max_positions=0, file_sizes=None):
         files = []
         for p in paths:
             p = os.path.expanduser(p)
             files += sorted(glob.glob(os.path.join(p, "**", "*.bin"), recursive=True)) if os.path.isdir(p) else [p]
         if not files:
             sys.exit("no data files found")
+        prepare_file_limit(len(files))
         self.maps, blocks = [], []
         total = 0
         for f in files:
-            n = os.path.getsize(f) // REC
+            n = min(os.path.getsize(f), file_sizes[f] if file_sizes is not None else os.path.getsize(f)) // REC
             if n == 0:
                 continue
             if max_positions and total + n > max_positions:
@@ -190,23 +192,6 @@ def to_inputs(dec, device):
     return (t(f_stm), t(f_nstm), t(offsets), t(bucket)), t(score), t(result)
 
 
-def prefetch(gen, depth=6):
-    q = queue.Queue(maxsize=depth)
-    done = object()
-
-    def run():
-        for item in gen:
-            q.put(item)
-        q.put(done)
-
-    threading.Thread(target=run, daemon=True).start()
-    while True:
-        item = q.get()
-        if item is done:
-            return
-        yield item
-
-
 def export(net, path):
     """Quantise and write the network: version 1 when unbucketed, else version 2."""
     q16 = lambda x, s: (x.detach().cpu() * s).round().clamp(-32768, 32767).to(torch.int16).numpy().astype("<i2")
@@ -242,13 +227,24 @@ def main():
     ap.add_argument("--max-positions", type=int, default=0)
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--workers", type=int, default=4, help="parallel record decoders")
+    ap.add_argument("--threads", type=int, default=4, help="PyTorch CPU threads")
+    ap.add_argument("--manifest", help="JSON mapping of input files to frozen byte lengths")
     args = ap.parse_args()
+    if args.workers < 1 or args.threads < 1 or args.epochs < 1 or args.batch < 1:
+        ap.error("worker, thread, epoch and batch counts must be positive")
+    torch.set_num_threads(args.threads)
+    torch.set_num_interop_threads(1)
     set_layout(args.input_buckets, args.output_buckets)
 
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    data = Dataset(args.data, args.val_every, args.max_positions)
+    file_sizes = json.load(open(args.manifest)) if args.manifest else None
+    data = Dataset(list(file_sizes) if file_sizes is not None else args.data,
+                   args.val_every, args.max_positions, file_sizes)
+    if data.n_train < args.batch or data.n_val < args.batch:
+        sys.exit("not enough training and validation data for one batch")
     print(f"hidden {args.hidden}, input buckets {args.input_buckets}, output buckets {args.output_buckets}, device {device}", flush=True)
 
     net = Net(args.hidden).to(device)
@@ -266,7 +262,7 @@ def main():
         net.eval()
         tot, n = 0.0, 0
         with torch.no_grad():
-            for b, dec in data.batches(data.val_blocks, args.batch):
+            for b, dec in data.batches(data.val_blocks, args.batch, workers=args.workers):
                 tot += float(loss_of(*to_inputs(dec, device))) * b
                 n += b
         net.train()
@@ -277,7 +273,7 @@ def main():
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
         run, cnt = 0.0, 0
-        for b, dec in prefetch(data.batches(data.train_blocks, args.batch, rng)):
+        for b, dec in prefetch(data.batches(data.train_blocks, args.batch, rng, workers=args.workers)):
             loss = loss_of(*to_inputs(dec, device))
             opt.zero_grad(set_to_none=True)
             loss.backward()

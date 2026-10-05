@@ -21,9 +21,9 @@ minutes.
 
 ## Status
 
-Version 0.9.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 295.0M self-play positions. It is the 8th network in a row to pass the gate against its predecessor; every promotion is recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.
+Version 0.11.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 353.9M self-play positions. It is the 10th network in a row to pass the gate against its predecessor; every promotion is recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.
 
-Search changes are tested the same way, on a fleet of cloud machines: 6 passed and ship (node-based time management, pawn-structure evaluation correction, piece-set evaluation correction, deeper/shallower re-searches, mop-up endgame knowledge, a history bonus for the move that made the opponent fail low), and 7 did not. Every result, including the failures, is in [`forge/tests.json`](forge/tests.json).
+Search changes are tested the same way, locally or on the cloud fleet: 6 were accepted (node-based time management, pawn-structure evaluation correction, piece-set evaluation correction, deeper/shallower re-searches, mop-up endgame knowledge, a history bonus for the move that made the opponent fail low), and 7 did not. Every result, including the failures, is in [`forge/tests.json`](forge/tests.json).
 
 **Measured strength: about 3,426 on the CCRL Blitz scale** (95% interval 3,414 to 3,437 from game statistics alone), from 2,284 games at 60+0.6 against 8 versions of Demolito, Ethereal, Laser, Stash and Weiss with published CCRL Blitz ratings: each opponent's rating is read from the CCRL list and one rating is fitted to the 6 matches the engine scores 20-80% in; at 10+0.1, 5,200 games give 3,448 (3,436 to 3,459). Stronger engines are too far ahead to rate against: Stockfish 17.1 (CCRL 3,771) 3.9% of 400 games, Koivisto 9.0 (CCRL 3,632) 10.6% of 400 games. The matches ran before the last search changes were accepted. These are our own matches on cloud machines, not an official CCRL rating, and the opponents' own ratings carry another 10-20 Elo of uncertainty. Details: [`forge/engines.json`](forge/engines.json).
 
@@ -112,6 +112,35 @@ calibration test.
 ```
 
 ## Repository
+
+On macOS, keep self-play, training, network gates and the queued search
+experiments running under a supervised service:
+
+```sh
+python3 forge/macbook.py install --cpu-budget 18 --min-new 20000000
+python3 forge/macbook.py status
+python3 forge/test_queue.py add NAME "change description" parameter=value
+python3 forge/macbook.py stop
+python3 forge/macbook.py start
+```
+
+This profile uses all 18 cores of the owner's Mac and starts a new training
+round after 20 million fresh positions. Other Macs can choose their own budget;
+omitting it reserves two cores. While search tests
+are pending, half the budget generates self-play and the rest plays test
+games. Network gates pause self-play and use the full budget; training uses
+Metal when available and eight parallel record decoders. Local gates save
+completed pairs every 64 games and resume after a restart. A build, network,
+book, settings or execution profile change starts a separate gate. Only a passed gate promotes
+a network or accepts search settings; the settings also apply to self-play.
+
+Self-play rotates into chunks of about one million positions. The controller
+limits generated data to 14 GiB and pauses generation below 8 GiB of free
+disk space. It retires only complete generated chunks that were included in
+a successful training round, preserving untrained data, networks and match
+evidence. The service restarts after a crash and starts at login. It makes
+progress while the Mac is awake; `status` reports its current phase, fresh
+positions, pending tests and saved gate results.
 
 | Path       | Contents                                             |
 | ---------- | ---------------------------------------------------- |

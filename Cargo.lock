@@ -4,21 +4,21 @@ version = 4
 
 [[package]]
 name = "arhanpassant"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "pyrrhic-rs",
 ]
 
 [[package]]
 name = "arhanpassant-arena"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "arhanpassant",
 ]
 
 [[package]]
 name = "arhanpassant-wasm"
-version = "0.9.0"
+version = "0.11.0"
 dependencies = [
  "arhanpassant",
 ]

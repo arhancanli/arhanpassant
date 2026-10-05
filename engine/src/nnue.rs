@@ -53,10 +53,10 @@ impl Reader<'_> {
         Ok(s)
     }
     fn i16s(&mut self, n: usize) -> Result<Vec<i16>, String> {
-        Ok(self.bytes(2 * n)?.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect())
+        Ok(self.bytes(2 * n)?.as_chunks::<2>().0.iter().map(|c| i16::from_le_bytes(*c)).collect())
     }
     fn i32s(&mut self, n: usize) -> Result<Vec<i32>, String> {
-        Ok(self.bytes(4 * n)?.chunks_exact(4).map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect())
+        Ok(self.bytes(4 * n)?.as_chunks::<4>().0.iter().map(|c| i32::from_le_bytes(*c)).collect())
     }
 }
 
@@ -183,38 +183,112 @@ pub struct Accumulators {
     net: Arc<Network>,
     /// [ply][colour][hidden]
     data: Vec<i16>,
+    positions: Vec<Position>,
+    moves: Vec<Move>,
+    ready: Vec<bool>,
+    /// Each perspective/bucket/mirror remembers its last board and features.
+    /// Revisiting a king bucket then updates only the pieces that changed.
+    cache_boards: Vec<[Bitboard; 12]>,
+    cache_data: Vec<i16>,
 }
 
 impl Accumulators {
     pub fn new(net: Arc<Network>, plies: usize) -> Accumulators {
         let h = net.hidden;
-        Accumulators { net, data: vec![0; plies * 2 * h] }
-    }
-
-    #[inline(always)]
-    fn slot(&mut self, ply: usize, c: usize) -> &mut [i16] {
-        let h = self.net.hidden;
-        let o = (ply * 2 + c) * h;
-        &mut self.data[o..o + h]
+        let banks = 2 * net.input_buckets * if net.mirror { 2 } else { 1 };
+        let cache_data = net.ft_bias.repeat(banks);
+        Accumulators {
+            net,
+            data: vec![0; plies * 2 * h],
+            positions: vec![Position::startpos(); plies],
+            moves: vec![Move::NULL; plies],
+            ready: vec![false; plies],
+            cache_boards: vec![[0; 12]; banks],
+            cache_data,
+        }
     }
 
     pub fn refresh(&mut self, pos: &Position, ply: usize) {
-        let net = self.net.clone();
         for c in 0..2 {
-            net.accumulate(pos, Color::from_idx(c), self.slot(ply, c));
+            self.refresh_side(pos, Color::from_idx(c), ply);
         }
+        self.positions[ply] = *pos;
+        self.ready[ply] = true;
+        self.ready[ply + 1..].fill(false);
+    }
+
+    fn refresh_side(&mut self, pos: &Position, perspective: Color, ply: usize) {
+        let net = &self.net;
+        let h = net.hidden;
+        let key = net.king_key(perspective, pos.king_sq(perspective));
+        let mirrors = if net.mirror { 2 } else { 1 };
+        let bank = (perspective.idx() * net.input_buckets + key.0) * mirrors + usize::from(key.1);
+        let cached = &mut self.cache_data[bank * h..(bank + 1) * h];
+        let board = &mut self.cache_boards[bank];
+        for (idx, old) in board.iter_mut().enumerate() {
+            let piece = Piece(idx as u8);
+            let current = pos.pieces(piece.color(), piece.piece_type());
+            for sq in squares(*old & !current) {
+                let f = net.feature(perspective, key, piece, sq);
+                for (a, &x) in cached.iter_mut().zip(&net.ft_weights[f * h..(f + 1) * h]) {
+                    *a = a.wrapping_sub(x);
+                }
+            }
+            for sq in squares(current & !*old) {
+                let f = net.feature(perspective, key, piece, sq);
+                for (a, &x) in cached.iter_mut().zip(&net.ft_weights[f * h..(f + 1) * h]) {
+                    *a = a.wrapping_add(x);
+                }
+            }
+            *old = current;
+        }
+        let o = (ply * 2 + perspective.idx()) * h;
+        self.data[o..o + h].copy_from_slice(cached);
     }
 
     /// Same position at the next ply (null move).
     pub fn copy_parent(&mut self, ply: usize) {
-        let h = self.net.hidden;
-        let (a, b) = self.data.split_at_mut(ply * 2 * h);
-        b[..2 * h].copy_from_slice(&a[(ply - 1) * 2 * h..]);
+        self.positions[ply] = self.positions[ply - 1];
+        self.positions[ply].play_null();
+        self.moves[ply] = Move::NULL;
+        self.ready[ply] = false;
     }
 
-    /// Derive the accumulator at `ply` from `ply - 1` after `m`. A perspective
-    /// whose king changed bucket or mirror side is rebuilt from scratch.
+    /// Record the next position. Many nodes return a table hit or a draw
+    /// without evaluating: defer feature work until an evaluation needs it.
     pub fn push(&mut self, parent: &Position, m: Move, child: &Position, ply: usize) {
+        debug_assert!(self.positions[ply - 1] == *parent);
+        self.positions[ply] = *child;
+        self.moves[ply] = m;
+        self.ready[ply] = false;
+    }
+
+    fn ensure(&mut self, ply: usize) {
+        if self.ready[ply] {
+            return;
+        }
+        let mut base = ply;
+        while base > 0 && !self.ready[base] {
+            base -= 1;
+        }
+        assert!(self.ready[base], "refresh the root before evaluating");
+        for next in base + 1..=ply {
+            let mv = self.moves[next];
+            if mv.is_null() {
+                let h = self.net.hidden;
+                let (a, b) = self.data.split_at_mut(next * 2 * h);
+                b[..2 * h].copy_from_slice(&a[(next - 1) * 2 * h..]);
+            } else {
+                let (parent, child) = (self.positions[next - 1], self.positions[next]);
+                self.update(&parent, mv, &child, next);
+            }
+            self.ready[next] = true;
+        }
+    }
+
+    /// Derive an accumulator from its computed parent. Rebuild a perspective
+    /// from scratch when its king changed bucket or mirror side.
+    fn update(&mut self, parent: &Position, m: Move, child: &Position, ply: usize) {
         let us = parent.side_to_move();
         let moved = parent.moved_piece(m);
         let placed = child.piece_on(m.to());
@@ -233,35 +307,50 @@ impl Accumulators {
             n_sub = 2;
             n_add = 2;
         }
-        let net = self.net.clone();
-        let h = net.hidden;
         for c in 0..2 {
             let persp = Color::from_idx(c);
-            let key = net.king_key(persp, child.king_sq(persp));
-            if moved.piece_type() == PieceType::King && persp == us && net.king_key(persp, parent.king_sq(persp)) != key {
-                net.accumulate(child, persp, self.slot(ply, c));
+            let key = self.net.king_key(persp, child.king_sq(persp));
+            if moved.piece_type() == PieceType::King && persp == us && self.net.king_key(persp, parent.king_sq(persp)) != key {
+                self.refresh_side(child, persp, ply);
                 continue;
             }
+            let net = &self.net;
+            let h = net.hidden;
             let (prev_all, cur_all) = self.data.split_at_mut(ply * 2 * h);
             let prev = &prev_all[(ply - 1) * 2 * h + c * h..(ply - 1) * 2 * h + (c + 1) * h];
             let cur = &mut cur_all[c * h..(c + 1) * h];
-            cur.copy_from_slice(prev);
-            for &(p, s) in &add[..n_add] {
+            let weights = |(p, s)| {
                 let f = net.feature(persp, key, p, s);
-                for (a, &x) in cur.iter_mut().zip(&net.ft_weights[f * h..(f + 1) * h]) {
-                    *a += x;
+                &net.ft_weights[f * h..(f + 1) * h]
+            };
+            let (a, b) = (weights(add[0]), weights(sub[0]));
+            // Fuse copying and all feature changes into one pass. Keeping the
+            // move kind outside the loop lets LLVM vectorise each case.
+            match (n_add, n_sub) {
+                (1, 1) => {
+                    for i in 0..h {
+                        cur[i] = prev[i].wrapping_add(a[i]).wrapping_sub(b[i]);
+                    }
                 }
-            }
-            for &(p, s) in &sub[..n_sub] {
-                let f = net.feature(persp, key, p, s);
-                for (a, &x) in cur.iter_mut().zip(&net.ft_weights[f * h..(f + 1) * h]) {
-                    *a -= x;
+                (1, 2) => {
+                    let d = weights(sub[1]);
+                    for i in 0..h {
+                        cur[i] = prev[i].wrapping_add(a[i]).wrapping_sub(b[i]).wrapping_sub(d[i]);
+                    }
                 }
+                (2, 2) => {
+                    let (c, d) = (weights(add[1]), weights(sub[1]));
+                    for i in 0..h {
+                        cur[i] = prev[i].wrapping_add(a[i]).wrapping_add(c[i]).wrapping_sub(b[i]).wrapping_sub(d[i]);
+                    }
+                }
+                _ => unreachable!("feature changes for a legal move"),
             }
         }
     }
 
     pub fn evaluate(&mut self, pos: &Position, ply: usize) -> i32 {
+        self.ensure(ply);
         let h = self.net.hidden;
         let us = pos.side_to_move().idx();
         let o = ply * 2 * h;
@@ -354,6 +443,73 @@ mod tests {
         for seed in 1..6 {
             walk(Arc::new(random_net(32, 0x9E37 + seed, true)), fen, seed);
             walk(Arc::new(random_net(32, 0x7F4A + seed, true)), "4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", seed);
+        }
+    }
+
+    #[test]
+    fn feature_updates_cover_castling_en_passant_and_promotions() {
+        let cases = [
+            ("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", "e1g1"),
+            ("r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1", "e8c8"),
+            ("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", "e5d6"),
+            ("4k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a7a8q"),
+            ("1r2k3/P7/8/8/8/8/8/4K3 w - - 0 1", "a7b8n"),
+            ("4k3/8/8/8/8/8/8/3K4 w - - 0 1", "d1e1"),
+        ];
+        for v2 in [false, true] {
+            let net = Arc::new(random_net(64, 17, v2));
+            let mut acc = Accumulators::new(net.clone(), 3);
+            for (fen, uci) in cases {
+                let pos = Position::from_fen(fen).unwrap();
+                let mv = pos.parse_uci_move(uci).unwrap();
+                let child = pos.after(mv);
+                acc.refresh(&pos, 0);
+                acc.push(&pos, mv, &child, 1);
+                assert_eq!(acc.evaluate(&child, 1), net.evaluate_full(&child), "{uci} in {fen}");
+            }
+        }
+    }
+
+    #[test]
+    fn deferred_chains_null_moves_and_backtracking_match_full() {
+        for v2 in [false, true] {
+            let net = Arc::new(random_net(64, 31, v2));
+            let mut acc = Accumulators::new(net.clone(), 130);
+            let root = Position::from_fen("r3k2r/pPppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1").unwrap();
+            acc.refresh(&root, 0);
+            let mut positions = vec![root];
+            let mut rng = 31u64;
+            for ply in 1..120 {
+                let pos = *positions.last().unwrap();
+                let moves = pos.legal_moves();
+                if moves.is_empty() {
+                    break;
+                }
+                let mut child = pos;
+                if ply % 9 == 0 && !pos.in_check() {
+                    child.play_null();
+                    acc.copy_parent(ply);
+                } else {
+                    rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    let mv = moves[(rng >> 33) as usize % moves.len()];
+                    child.play(mv);
+                    acc.push(&pos, mv, &child, ply);
+                }
+                positions.push(child);
+                if ply % 7 == 0 {
+                    assert_eq!(acc.evaluate(&child, ply), net.evaluate_full(&child));
+                }
+            }
+            let ply = positions.len() - 1;
+            assert_eq!(acc.evaluate(&positions[ply], ply), net.evaluate_full(&positions[ply]));
+            for ply in (0..positions.len() - 1).rev() {
+                let parent = positions[ply];
+                for mv in parent.legal_moves().iter().take(3) {
+                    let child = parent.after(mv);
+                    acc.push(&parent, mv, &child, ply + 1);
+                    assert_eq!(acc.evaluate(&child, ply + 1), net.evaluate_full(&child));
+                }
+            }
         }
     }
 

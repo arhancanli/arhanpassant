@@ -5,7 +5,7 @@ use crate::movegen::perft_divide;
 use crate::nnue::Network;
 use crate::params;
 use crate::position::{Position, START_FEN};
-use crate::search::{search_threads, Limits, SearchInfo, Searcher, Shared};
+use crate::search::{search_threads_prepared, Limits, SearchInfo, Searcher, Shared};
 use std::io::{self, BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -156,7 +156,7 @@ impl Uci {
             // The opponent played the move we were pondering on: the search continues under its time limits.
             "ponderhit" => {
                 if let Some(s) = self.searchers_shared() {
-                    s.pondering.store(false, Ordering::Relaxed);
+                    s.ponderhit();
                 }
             }
             "quit" => return false,
@@ -319,6 +319,7 @@ impl Uci {
         let overhead = self.move_overhead;
         let mut searchers = std::mem::take(&mut self.searchers);
         self.shared_handle = searchers.first().map(|s| s.shared.clone());
+        self.shared_handle.as_ref().unwrap().prepare(&limits);
         let gui_stop = Arc::new(AtomicBool::new(false));
         let gs = gui_stop.clone();
         let handle = std::thread::Builder::new()
@@ -327,7 +328,7 @@ impl Uci {
                 let mut report = |info: &SearchInfo| {
                     println!("{}", info_line(info));
                 };
-                let result = search_threads(&mut searchers, &pos, &history, &limits, overhead, &mut report);
+                let result = search_threads_prepared(&mut searchers, &pos, &history, &limits, overhead, &mut report);
                 // For `go infinite`, hold the answer until the GUI says stop; for `go ponder`,
                 // until `ponderhit` or `stop` (a ponder search can finish early, e.g. on a mate).
                 let shared = searchers[0].shared.clone();

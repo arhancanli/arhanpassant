@@ -152,6 +152,7 @@ mod imp {
         tb.probe_wdl(w, b, k, q, r, bi, n, p, ep, pos.side_to_move() == Color::White).ok().map(wdl_of)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn probe_root(pos: &Position) -> Option<(Wdl, Vec<(Move, Wdl, u16)>)> {
         let guard = TB.read().ok()?;
         let tb = guard.as_ref()?;
