@@ -225,6 +225,23 @@ evaluation. Use `--pilot` for a mechanics check. Held-out groups are excluded fr
 this study's fine-tuning and replay; historical champion pretraining may have
 included them. Model losses and pilot results do not replace fresh strength gates.
 
+`trainer/teacher_corpus.py prepare` captures fresh eligible records and their
+source offsets in a separate frozen corpus. Its default experiment samples
+65,536 records; repeated boards are counted and later grouped by the paired
+trainer. Selected bytes are copied before their live source can be retired.
+The manifest fixes the reference executable, node ceiling, options, source state,
+sampling seed and labeling code.
+
+Run `teacher_corpus.py advance --out PATH --workers 18 --cpu-budget 18
+--max-chunks 1` inside a reserved supervisor CPU slot. Each invocation adds at
+most the requested number of chunks, checks disk headroom above the 8 GiB floor,
+and verifies all completed evidence before proceeding. Restarts recover a
+completed chunk even if the subsequent progress checkpoint was interrupted.
+Failed partial chunks retain their evidence and retry the same sampled records.
+An exclusive corpus lock prevents duplicate writers. The final `corpus/` contains
+paired binaries, audit rows and a hash validation file suitable for `paired.py`.
+This tool does not interrupt the controller itself or promote models.
+
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
 reduces concurrent games to fit their threads within the remaining CPU budget.
