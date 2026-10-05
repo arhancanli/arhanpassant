@@ -462,6 +462,7 @@ def main():
     ap.add_argument("--min-free-gb", type=float, default=8, help="pause generation below this many free GiB")
     ap.add_argument("--train-workers", type=int, default=8)
     ap.add_argument("--train-threads", type=int, default=4)
+    ap.add_argument("--train-hidden", type=int, help="explicit hidden width for a gated network-capacity experiment")
     ap.add_argument("--no-publish", action="store_true", help="keep promotion and search ledgers local")
     ap.add_argument("--keep-awake", action="store_true", help="prevent macOS idle sleep for this controller's lifetime")
     ap.add_argument("--milestone-catalog", help="verified local opponents; alternate milestone matches with search gates")
@@ -477,6 +478,8 @@ def main():
         ap.error("CPU, training, polling and storage budgets must be positive")
     if args.batch_games < 2 or args.batch_games % 2 or args.max_games < 2 or args.max_games % 2:
         ap.error("gate budgets must contain complete game pairs")
+    if args.train_hidden is not None and (not 8 <= args.train_hidden <= 8192 or args.train_hidden % 8):
+        ap.error("hidden width must be a multiple of eight between 8 and 8192")
     if args.min_new * REC > args.max_data_gb * 2**30:
         ap.error("the fresh-data threshold cannot exceed the self-play storage budget")
 
@@ -577,7 +580,7 @@ def run_controller(args, forge_dir):
                 state["phase"] = "training"
                 state["attempts"] += 1
                 save_json(state_path, state)
-                hidden = hidden_for(n)
+                hidden = args.train_hidden if args.train_hidden is not None else hidden_for(n)
                 shape = f" ({args.input_buckets} king buckets, {args.output_buckets} output buckets)" if args.input_buckets * args.output_buckets > 1 else ""
                 change = f"NNUE network{shape}, {hidden} hidden units, trained on {n / 1e6:.1f}M self-play positions"
                 stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%S")

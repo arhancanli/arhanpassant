@@ -22,7 +22,7 @@ LABEL = "com.arhanpassant.engine-forge"
 PLIST = pathlib.Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 
 
-def profile(data, cpu_budget, min_new, no_publish=False, keep_awake=True):
+def profile(data, cpu_budget, min_new, no_publish=False, keep_awake=True, train_hidden=None):
     data = pathlib.Path(data).resolve()
     cmd = [str(ROOT / ".venv/bin/python"), str(ROOT / "forge/loop.py"), "--data", str(data),
            "--engine", str(data / "bin/ap-current"), "--arena", str(data / "bin/arena"),
@@ -37,6 +37,8 @@ def profile(data, cpu_budget, min_new, no_publish=False, keep_awake=True):
     catalog = data / "opponents/catalog.json"
     if catalog.is_file():
         cmd.extend(["--milestone-catalog", str(catalog)])
+    if train_hidden is not None:
+        cmd.extend(["--train-hidden", str(train_hidden)])
     return {"Label": LABEL, "ProgramArguments": cmd, "WorkingDirectory": str(ROOT),
             "RunAtLoad": True, "KeepAlive": True, "ThrottleInterval": 30,
             # launchd's Background and Standard classes throttle sustained
@@ -131,12 +133,15 @@ def main():
     ap.add_argument("--min-new", type=int, default=40_000_000)
     ap.add_argument("--no-publish", action="store_true")
     ap.add_argument("--allow-idle-sleep", action="store_true", help="omit the service's idle-sleep assertion")
+    ap.add_argument("--train-hidden", type=int, help="hidden width for the next gated network-capacity experiment")
     args = ap.parse_args()
     args.data = str(pathlib.Path(args.data).expanduser().resolve())
     if sys.platform != "darwin":
         ap.error("launchd supervision is for macOS; run forge/loop.py directly elsewhere")
     if not 1 <= args.cpu_budget <= (os.cpu_count() or 1) or args.min_new < 1:
         ap.error("choose a positive CPU budget within the available cores and a positive data threshold")
+    if args.train_hidden is not None and (not 8 <= args.train_hidden <= 8192 or args.train_hidden % 8):
+        ap.error("hidden width must be a multiple of eight between 8 and 8192")
     domain, service = f"gui/{os.getuid()}", f"gui/{os.getuid()}/{LABEL}"
     if args.command == "status":
         status(args.data)
@@ -151,7 +156,7 @@ def main():
         launch("kickstart", service)
         print("engine improvement service started")
     else:
-        config = profile(args.data, args.cpu_budget, args.min_new, args.no_publish, not args.allow_idle_sleep)
+        config = profile(args.data, args.cpu_budget, args.min_new, args.no_publish, not args.allow_idle_sleep, args.train_hidden)
         for path in (config["ProgramArguments"][0], pathlib.Path(args.data) / "bin/ap-current",
                      pathlib.Path(args.data) / "bin/arena", ROOT / "tools/books/UHO_4060_v4.epd"):
             if not pathlib.Path(path).is_file():

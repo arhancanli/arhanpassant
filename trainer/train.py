@@ -233,6 +233,8 @@ def main():
     args = ap.parse_args()
     if args.workers < 1 or args.threads < 1 or args.epochs < 1 or args.batch < 1:
         ap.error("worker, thread, epoch and batch counts must be positive")
+    if not 8 <= args.hidden <= 8192 or args.hidden % 8:
+        ap.error("hidden width must be a multiple of eight between 8 and 8192")
     torch.set_num_threads(args.threads)
     torch.set_num_interop_threads(1)
     set_layout(args.input_buckets, args.output_buckets)

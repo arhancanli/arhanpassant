@@ -120,6 +120,37 @@ class ControllerTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_explicit_network_capacity_uses_frozen_data_and_still_requires_the_gate(self):
+        net = self.root / "nets/champion.nnue"
+        net.write_bytes(b"champion")
+        records = self.root / "selfplay/gen1/data.bin"
+        records.parent.mkdir(parents=True)
+        records.write_bytes(bytes(4 * 32))
+        state = {"generation": 1, "champion_net": str(net), "champion_version": "0.12.0",
+                 "trained_on": 0, "attempts": 0}
+        loop.save_json(str(self.root / "forge/state.json"), state)
+        def train(cmd, logfile):
+            self.assertEqual(cmd[cmd.index("--hidden") + 1], "1024")
+            manifest = pathlib.Path(cmd[cmd.index("--manifest") + 1])
+            self.assertEqual(json.loads(manifest.read_text()), {str(records): 128})
+            pathlib.Path(cmd[cmd.index("--out") + 1]).write_bytes(b"larger candidate")
+            return 0
+        result = {"decision": "H0", "games": 1000, "elo": -20, "elo_lo": -30,
+                  "elo_hi": -10, "sprt": {"llr": -3}}
+        argv = ["loop.py", "--data", str(self.root), "--min-new", "1", "--min-free-gb", "0",
+                "--train-hidden", "1024", "--once", "--no-publish"]
+        with patch.object(sys, "argv", argv), patch.object(loop.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(loop, "run", train), patch.object(loop, "gate", return_value=result) as gate:
+                loop.main()
+        self.assertEqual(gate.call_count, 1)
+        saved = json.loads((self.root / "forge/state.json").read_text())
+        self.assertEqual(saved["trained_on"], 4)
+        self.assertEqual(saved["attempts"], 1)
+        self.assertEqual(saved["champion_net"], str(net))
+        self.assertEqual(saved["champion_version"], "0.12.0")
+        profile = macbook.profile(self.root, 18, 20_000_000, train_hidden=1024)["ProgramArguments"]
+        self.assertEqual(profile[profile.index("--train-hidden") + 1], "1024")
+
     def test_idle_sleep_assertion_is_owned_by_the_controller_and_released_on_failure(self):
         guard = Mock()
         with patch.object(loop.subprocess, "Popen", return_value=guard) as spawn:

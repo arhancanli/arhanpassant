@@ -171,6 +171,12 @@ pair-based conservative 95% score intervals. These matches measure outside
 opposition; the existing SPRT gates decide promotions. Historical cloud ratings
 are not extrapolated from these Mac results.
 
+For a network-capacity experiment, append `--train-hidden 1024` when installing
+the Mac profile. The next training round uses that width and the normal gate
+compares the candidate with the current champion before any promotion. Omit
+the option to choose capacity from the retained dataset size. This makes larger
+models testable without expanding the self-play storage budget.
+
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
 reduces concurrent games to fit their threads within the remaining CPU budget.
