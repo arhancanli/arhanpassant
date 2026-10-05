@@ -14,6 +14,7 @@ Needs python-chess (the Lichess bot's virtualenv has it).
 """
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -45,7 +46,7 @@ def score_cp(info, pov):
 
 
 def analyse_game(game, sf_path, nodes):
-    us_white = game["white"] == US
+    us_white = game["white"].casefold() == US.casefold()
     us = chess.WHITE if us_white else chess.BLACK
     board = chess.Board(game["fen"])
     moves = game["moves"].split()
@@ -68,8 +69,10 @@ def analyse_game(game, sf_path, nodes):
             board.push_uci(m)
     rows = []
     for i, m in enumerate(moves):
+        if i + 1 >= len(evals):
+            break
         b = boards[i]
-        if b.turn != us or i + 1 >= len(evals) or evals[i] is None or evals[i + 1] is None:
+        if b.turn != us or evals[i] is None or evals[i + 1] is None:
             continue
         drop = win_pct(evals[i]) - win_pct(evals[i + 1])
         rows.append({"phase": phase(b), "drop": round(drop, 1), "fen": b.fen(), "played": m,
@@ -91,15 +94,18 @@ def main():
 
     losses = []
     for path in args.games:
-        for line in open(path):
-            if not line.strip():
-                continue
-            g = json.loads(line)
-            if US not in (g["white"], g["black"]):
-                continue
-            lost = (g["result"] == "1-0" and g["black"] == US) or (g["result"] == "0-1" and g["white"] == US)
-            if lost:
-                losses.append(g)
+        with open(path) as source:
+            for line in source:
+                if not line.strip():
+                    continue
+                g = json.loads(line)
+                white, black = g["white"].casefold(), g["black"].casefold()
+                if US.casefold() not in (white, black):
+                    continue
+                lost = ((g["result"] == "1-0" and black == US.casefold())
+                        or (g["result"] == "0-1" and white == US.casefold()))
+                if lost:
+                    losses.append(g)
     random.Random(args.seed).shuffle(losses)
     sample = losses[:args.sample]
     with ThreadPoolExecutor(args.threads) as pool:
@@ -120,7 +126,15 @@ def main():
             worst = max(rows, key=lambda r: r["drop"])
             turned[worst["phase"]] = turned.get(worst["phase"], 0) + 1
     worst = sorted(moves, key=lambda r: -r["drop"])[:40]
+    def digest(path):
+        h = hashlib.sha256()
+        with open(path, "rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
     report = {"losses_available": len(losses), "losses_analysed": len(sample), "stockfish_nodes": args.nodes,
+              "stockfish_sha256": digest(args.stockfish), "input_sha256": {p: digest(p) for p in args.games},
+              "seed": args.seed,
               "by_phase": {k: {**v, "drop_per_move": round(v["drop_total"] / max(v["moves"], 1), 2),
                                "blunders_per_100": round(100 * v["blunders"] / max(v["moves"], 1), 2)}
                            for k, v in by_phase.items()},
