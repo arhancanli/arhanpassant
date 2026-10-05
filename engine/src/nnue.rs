@@ -23,6 +23,54 @@ pub const QB: i32 = 64;
 pub const SCALE: i32 = 400;
 const MAGIC: &[u8; 4] = b"APNN";
 
+/// Each squared activation times an i16 weight fits in i32, but their
+/// reduction needs i64 even for small networks with extreme weights.
+#[inline]
+fn squared_dot_scalar(acc: &[i16], weights: &[i16]) -> i64 {
+    acc.iter().zip(weights).map(|(&x, &w)| {
+        let c = i32::from(x).clamp(0, QA);
+        i64::from(c * c * i32::from(w))
+    }).sum()
+}
+
+#[inline]
+fn squared_dot(acc: &[i16], weights: &[i16]) -> i64 {
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        // SAFETY: this build requires NEON. The kernel loads only complete
+        // eight-element arrays obtained from these valid slices.
+        unsafe { squared_dot_neon(acc, weights) }
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    {
+        squared_dot_scalar(acc, weights)
+    }
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[target_feature(enable = "neon")]
+unsafe fn squared_dot_neon(acc: &[i16], weights: &[i16]) -> i64 {
+    use std::arch::aarch64::*;
+    let n = acc.len().min(weights.len());
+    let (values, tail) = acc[..n].as_chunks::<8>();
+    let (weights, weight_tail) = weights[..n].as_chunks::<8>();
+    let zero = vdupq_n_s16(0);
+    let cap = vdupq_n_s16(QA as i16);
+    let mut low_sum = vdupq_n_s64(0);
+    let mut high_sum = vdupq_n_s64(0);
+    for (a, w) in values.iter().zip(weights) {
+        let c = vminq_s16(vmaxq_s16(vld1q_s16(a.as_ptr()), zero), cap);
+        let w = vld1q_s16(w.as_ptr());
+        // Multiply c*w first, widen c, then multiply again. Squaring c in
+        // i16 would overflow above 181. Widen before every pairwise sum.
+        let low = vmulq_s32(vmull_s16(vget_low_s16(c), vget_low_s16(w)), vmovl_s16(vget_low_s16(c)));
+        let high = vmulq_s32(vmull_high_s16(c, w), vmovl_high_s16(c));
+        low_sum = vpadalq_s32(low_sum, low);
+        high_sum = vpadalq_s32(high_sum, high);
+    }
+    vaddvq_s64(vaddq_s64(low_sum, high_sum)) + squared_dot_scalar(tail, weight_tail)
+}
+
 pub struct Network {
     pub hidden: usize,
     pub input_buckets: usize,
@@ -158,20 +206,21 @@ impl Network {
         self.accumulate(pos, Color::White, &mut white);
         self.accumulate(pos, Color::Black, &mut black);
         let (us, them) = if pos.side_to_move() == Color::White { (&white, &black) } else { (&black, &white) };
-        self.output(us, them, self.output_bucket(pos))
+        self.output_with::<true>(us, them, self.output_bucket(pos))
     }
 
     #[inline]
     fn output(&self, us: &[i16], them: &[i16], bucket: usize) -> i32 {
+        self.output_with::<false>(us, them, bucket)
+    }
+
+    #[inline]
+    fn output_with<const SCALAR: bool>(&self, us: &[i16], them: &[i16], bucket: usize) -> i32 {
         let h = self.hidden;
         let w = &self.out_weights[bucket * 2 * h..(bucket + 1) * 2 * h];
         let mut sum: i64 = 0;
         for (half, w) in [(us, &w[..h]), (them, &w[h..])] {
-            for (&x, &wi) in half.iter().zip(w.iter()) {
-                let c = (x as i32).clamp(0, QA);
-                // c * c * w fits in i32 for any i16 weight; the sum may not, so widen.
-                sum += (c * c * wi as i32) as i64;
-            }
+            sum += if SCALAR { squared_dot_scalar(half, w) } else { squared_dot(half, w) };
         }
         let out = (sum / QA as i64 + self.out_bias[bucket] as i64) * SCALE as i64 / (QA as i64 * QB as i64);
         out as i32
@@ -558,5 +607,32 @@ mod tests {
             assert_eq!(back.evaluate_full(&pos), net.evaluate_full(&pos));
             assert!(Network::from_bytes(&b[..b.len() - 1]).is_err());
         }
+    }
+
+    #[test]
+    fn output_kernel_matches_scalar_at_extremes_and_unaligned_lengths() {
+        let mut seed = 0x1234_5678u64;
+        for n in [0, 1, 7, 8, 9, 15, 16, 24, 64, 512, 1024, 8192] {
+            let mut values = vec![0i16; n + 1];
+            let mut weights = values.clone();
+            for i in 0..n + 1 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                values[i] = (seed >> 32) as i16;
+                weights[i] = (seed >> 48) as i16;
+            }
+            // Starting one i16 into a vector exercises unaligned loads.
+            assert_eq!(squared_dot(&values[1..], &weights[1..]), squared_dot_scalar(&values[1..], &weights[1..]));
+            for x in [i16::MIN, -1, 0, 1, 181, 254, 255, 256, i16::MAX] {
+                for w in [i16::MIN, -1, 0, 1, i16::MAX] {
+                    values.fill(x);
+                    weights.fill(w);
+                    let c = i64::from(x).clamp(0, i64::from(QA));
+                    assert_eq!(squared_dot(&values[1..], &weights[1..]), c * c * i64::from(w) * n as i64);
+                }
+            }
+        }
+        let values = [255; 8];
+        let weights = [i16::MAX; 8];
+        assert!(squared_dot(&values, &weights) > i64::from(i32::MAX));
     }
 }

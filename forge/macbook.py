@@ -95,7 +95,10 @@ def status(data):
     if queue["pending"] and state.get("phase") == "search tests and self-play":
         import re
         name = re.sub(r"[^A-Za-z0-9_.-]", "_", queue["pending"][0]["name"])
-        identity = local_gate.digest(data / "bin/ap-current")[:12] + "-" + local_gate.digest(state["champion_net"])[:12]
+        item = queue["pending"][0]
+        engine = os.path.expanduser(item.get("candidate_engine", str(data / "bin/ap-current")))
+        baseline = os.path.expanduser(item.get("baseline_engine", engine))
+        identity = local_gate.build_identity(engine, state["champion_net"], baseline)
         result = read(data / "forge/tests" / f"local-{name}-{identity}.json", {})
         if result:
             out["search_test"] = {k: result.get(k) for k in ("games", "elo", "elo_lo", "elo_hi", "sprt", "decision")}

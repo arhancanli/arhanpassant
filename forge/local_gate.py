@@ -31,6 +31,13 @@ def digest(path):
     return h.hexdigest()
 
 
+def build_identity(engine, network, baseline_engine=None):
+    candidate = digest(engine)[:12]
+    baseline = digest(baseline_engine or engine)[:12]
+    pair = candidate if candidate == baseline else f"{candidate}-vs-{baseline}"
+    return pair + "-" + digest(network)[:12]
+
+
 def run(cmd, logfile):
     """Own the entire child process group, including arena's engine children."""
     with open(logfile, "a") as f:

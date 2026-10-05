@@ -54,6 +54,9 @@ def add(name, change, opts):
     if any(k.lower() == "threads" for k in opts):
         raise ValueError("use common.Threads so both engines have the same thread count")
     item = {"name": name, "change": change, "opts": opts}
+    for key in ("candidate_engine", "baseline_engine"):
+        if key in opts:
+            item[key] = opts.pop(key)
     if common:
         item["common_options"] = common
     if "bounds" in opts:
@@ -76,6 +79,8 @@ def run():
             continue
         said_idle = False
         item = q["pending"][0]
+        if "candidate_engine" in item or "baseline_engine" in item:
+            raise ValueError("binary comparison entries require the local forge controller; fleet tests select builds remotely")
         base = {**accepted(), **item.get("common_options", {})}
         elo0, elo1 = item.get("bounds", [0.0, 5.0])
         entry = fleet_test.run_test(item["name"], item["change"], {**base, **item["opts"]}, dict(base), elo0=elo0, elo1=elo1)

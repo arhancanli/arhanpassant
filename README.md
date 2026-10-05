@@ -149,6 +149,13 @@ Common options are recorded with the evidence and are never promoted as tuned
 settings. `smp_vote=1` is an experimental vote among completed main and helper
 searches; its shipped default is zero until a strength test passes.
 
+To compare executable changes locally, a queue entry can set `candidate_engine`
+and `baseline_engine` (also accepted by `test_queue.py add`). Both sides use
+the same champion network and accepted settings. The result records the hash
+of each executable, and changing either starts a separate test. The Apple
+Silicon neural output kernel uses NEON with exact i64 reduction; full evaluation
+retains the scalar reference, and other architectures use the portable path.
+
 | Path       | Contents                                             |
 | ---------- | ---------------------------------------------------- |
 | `engine/`  | The engine and library (`arhanpassant` crate)        |

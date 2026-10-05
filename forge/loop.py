@@ -269,7 +269,9 @@ def search_batch(args, state, logfile):
     threads = search_threads_for(args, item)
     base = {**search_settings(args), **item.get("common_options", {})}
     elo0, elo1 = item.get("bounds", [0.0, 5.0])
-    identity = local_gate.digest(args.engine)[:12] + "-" + local_gate.digest(state["champion_net"])[:12]
+    engine = os.path.expanduser(item.get("candidate_engine", args.engine))
+    baseline = os.path.expanduser(item.get("baseline_engine", engine))
+    identity = local_gate.build_identity(engine, state["champion_net"], baseline)
     directory = os.path.join(args.data, "forge", "tests")
     os.makedirs(directory, exist_ok=True)
     name = re.sub(r"[^A-Za-z0-9_.-]", "_", item["name"])
@@ -284,7 +286,7 @@ def search_batch(args, state, logfile):
         result = previous
         base = previous["config"]["champion_options"]
     else:
-        result = local_gate.gate(engine=args.engine, arena=args.arena,
+        result = local_gate.gate(engine=engine, baseline_engine=baseline, arena=args.arena,
                                  candidate=state["champion_net"], champion=state["champion_net"],
                                  book=args.book, tc=args.tc, concurrency=max(1, workers),
                                  max_games=args.max_games, elo0=elo0, elo1=elo1,

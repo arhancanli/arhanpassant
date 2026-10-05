@@ -254,6 +254,28 @@ class ControllerTests(unittest.TestCase):
         accepted = json.loads((self.root / "forge/search.json").read_text())["accepted"]
         self.assertEqual(accepted, {"tm_nodes": "1", "smp_vote": "1"})
 
+    def test_binary_comparison_uses_both_saved_builds_and_the_same_options(self):
+        engine, baseline, net = self.root / "engine", self.root / "baseline", self.root / "nets/champion.nnue"
+        for path in (engine, baseline, net):
+            path.write_bytes(path.name.encode())
+        args = types.SimpleNamespace(data=str(self.root), engine="unused-default", arena="arena", book="book",
+                                     concurrency=18, cpu_budget=18, max_games=12000, tc="8+0.08",
+                                     batch_games=64, no_publish=True)
+        item = {"name": "neon-output", "change": "vector output", "opts": {},
+                "candidate_engine": str(engine), "baseline_engine": str(baseline)}
+        loop.save_json(str(self.root / "forge/queue.json"), {"pending": [item], "done": []})
+        loop.save_json(str(self.root / "forge/search.json"), {"accepted": {"tm_nodes": "1"}, "history": []})
+        def running(**kw):
+            self.assertEqual(kw["engine"], str(engine))
+            self.assertEqual(kw["baseline_engine"], str(baseline))
+            self.assertEqual(kw["candidate"], str(net))
+            self.assertEqual(kw["champion"], str(net))
+            self.assertEqual(kw["cand_opts"], kw["champ_opts"])
+            self.assertIn("-vs-", kw["out"])
+            return {"decision": "running"}
+        with patch.object(local_gate, "gate", running):
+            loop.search_batch(args, {"champion_net": str(net)}, str(self.root / "forge/log"))
+
 
 if __name__ == "__main__":
     unittest.main()
