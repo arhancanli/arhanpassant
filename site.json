@@ -1,6 +1,6 @@
 {
- "updated": "2026-10-05T00:20:17Z",
- "champion": "0.11.0",
+ "updated": "2026-10-05T08:13:13Z",
+ "champion": "0.12.0",
  "ledger": [
   {
    "version": "0.1.0",
@@ -129,6 +129,18 @@
    "eloHi": 38.8,
    "llr": 2.98,
    "net": "champion-0.11.0.nnue"
+  },
+  {
+   "version": "0.12.0",
+   "date": "2026-10-05",
+   "change": "NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 381.8M self-play positions",
+   "status": "promoted",
+   "games": 2560,
+   "elo": 12.4,
+   "eloLo": 4.6,
+   "eloHi": 20.2,
+   "llr": 3.09,
+   "net": "champion-0.12.0.nnue"
   }
  ],
  "tests": [
