@@ -151,6 +151,92 @@ class MilestoneTests(unittest.TestCase):
         report = milestones.read(directory / "report.json")
         self.assertEqual((report["games"], report["status"]), (168, "complete"))
 
+    def fail_on_time(self, cmd, logfile):
+        self.arena(cmd, logfile)
+        path = cmd[cmd.index("--out") + 1]
+        batch = milestones.read(path)
+        batch["reasons"] = {"loses on time": 1, "adjudicated": batch["games"] - 1}
+        local_gate.save(path, batch)
+        return 0
+
+    def test_rejected_attempt_is_archived_before_a_clean_retry(self):
+        directory, manifest = self.snapshot()
+        match = manifest["matches"][0]
+        with patch.object(local_gate, "run", self.fail_on_time), self.assertRaisesRegex(ValueError, "unreliable"):
+            milestones.advance_match(manifest, match, directory, 9, "log")
+        batches = directory / (pathlib.Path(match["file"]).stem + "-batches")
+        summary = (batches / "0000.json").read_bytes()
+        records = (batches / "0000.games.jsonl").read_bytes()
+        def retry(cmd, logfile):
+            self.assertEqual((batches / "0000-attempts/0001/0000.json").read_bytes(), summary)
+            self.assertEqual((batches / "0000-attempts/0001/0000.games.jsonl").read_bytes(), records)
+            self.assertFalse((batches / "0000.json").exists())
+            return self.arena(cmd, logfile)
+        with patch.object(local_gate, "run", retry):
+            result = milestones.advance_match(manifest, match, directory, 9, "log")
+        self.assertEqual(result["games"], 4)
+        journal = milestones.read(batches / "0000.attempts.json")
+        self.assertEqual([a["status"] for a in journal["attempts"]], ["failed", "passed"])
+        self.assertEqual(journal["attempts"][0]["command"], self.commands[0])
+        self.assertEqual(journal["attempts"][1]["command"], self.commands[1])
+        for f in journal["attempts"][0]["files"]:
+            self.assertEqual(local_gate.digest(f["file"]), f["sha256"])
+
+    def test_interrupted_attempt_keeps_partial_records_and_consumes_one_attempt(self):
+        directory, manifest = self.snapshot()
+        match = manifest["matches"][0]
+        def interrupted(cmd, logfile):
+            self.arena(cmd, logfile)
+            pathlib.Path(cmd[cmd.index("--games-out") + 1]).write_text('{"partial":true}\n')
+            raise SystemExit("controller stopped")
+        with patch.object(local_gate, "run", interrupted), self.assertRaises(SystemExit):
+            milestones.advance_match(manifest, match, directory, 9, "log")
+        with patch.object(local_gate, "run", self.arena):
+            result = milestones.advance_match(manifest, match, directory, 9, "log")
+        batches = directory / (pathlib.Path(match["file"]).stem + "-batches")
+        self.assertEqual((batches / "0000-attempts/0001/0000.games.jsonl").read_text(), '{"partial":true}\n')
+        self.assertEqual(len(milestones.read(batches / "0000.attempts.json")["attempts"]), 2)
+        self.assertEqual(result["games"], 4)
+
+    def test_unsealed_legacy_outputs_are_preserved_and_wrong_journal_is_rejected(self):
+        directory, manifest = self.snapshot()
+        match = manifest["matches"][0]
+        batches = directory / (pathlib.Path(match["file"]).stem + "-batches")
+        batches.mkdir()
+        (batches / "0000.json").write_text("unfinished JSON")
+        (batches / "0000.games.jsonl").write_text("legacy partial record\n")
+        with patch.object(local_gate, "run", self.fail_on_time), self.assertRaises(ValueError):
+            milestones.advance_match(manifest, match, directory, 9, "log")
+        self.assertEqual((batches / "0000-attempts/0001/0000.json").read_text(), "unfinished JSON")
+        journal_path = batches / "0000.attempts.json"
+        journal = milestones.read(journal_path)
+        self.assertTrue(journal["attempts"][0]["legacy"])
+        journal["seed"] += 1
+        local_gate.save(str(journal_path), journal)
+        with patch.object(local_gate, "run", side_effect=AssertionError("must not launch")):
+            with self.assertRaisesRegex(ValueError, "journal does not match"):
+                milestones.advance_match(manifest, match, directory, 9, "log")
+
+    def test_retry_limit_survives_restart_and_other_opponents_keep_running(self):
+        directory, manifest = self.snapshot()
+        match = manifest["matches"][0]
+        for _ in range(milestones.MAX_BATCH_ATTEMPTS):
+            with patch.object(local_gate, "run", self.fail_on_time), self.assertRaisesRegex(ValueError, "unreliable"):
+                milestones.advance(self.args, self.state, 9, "log", lambda _: None)
+        self.assertFalse((directory / match["file"]).exists())
+        with patch.object(local_gate, "run", side_effect=AssertionError("must not launch")):
+            with self.assertRaises(milestones.RetryLimit):
+                milestones.advance_match(manifest, match, directory, 9, "log")
+        with patch.object(local_gate, "run", self.arena):
+            for _ in range(40):
+                milestones.advance(self.args, self.state, 9, "log", lambda _: None)
+        report = milestones.read(directory / "report.json")
+        self.assertEqual((report["games"], report["status"]), (160, "needs_attention"))
+        self.assertIsNone(milestones.pending(self.args.data))
+        self.assertEqual(report["blocked_matches"][0]["opponent"], match["opponent"])
+        self.assertEqual(report["blocked_matches"][0]["attempts"], milestones.MAX_BATCH_ATTEMPTS)
+        self.assertEqual(len(self.commands), 43)
+
     def test_profile_and_multicore_search_share_one_eighteen_core_controller(self):
         config = macbook.profile(self.root, 18, 20_000_000)
         self.assertIn("--milestone-catalog", config["ProgramArguments"])

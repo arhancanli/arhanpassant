@@ -171,6 +171,15 @@ pair-based conservative 95% score intervals. These matches measure outside
 opposition; the existing SPRT gates decide promotions. Historical cloud ratings
 are not extrapolated from these Mac results.
 
+Rejected or interrupted external batches keep their summary and game records
+in numbered `NNNN-attempts/` archives before a retry reuses the output paths.
+The adjacent `NNNN.attempts.json` records commands and errors. A batch gets at
+most three attempts across restarts, including an interrupted launch. Exhausted
+batches are listed in `blocked_matches`; other opponents and search tests keep
+running. If only exhausted batches remain, the suite reports `needs_attention`
+and stops scheduling games until the cause is investigated. Failed attempts
+never enter the accepted game counts or score intervals.
+
 Analyse saved losses with `forge/blunders.py` using the dependencies in
 `forge/requirements-analysis.txt`. It compares Stockfish's preferred move
 with the played move from the same position, at equal node limits and with
