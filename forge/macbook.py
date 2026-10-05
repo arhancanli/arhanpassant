@@ -88,6 +88,8 @@ def status(data):
            "fresh_positions": sum(max(0, n - snapshot.get(p, 0)) // 32 for p, n in sizes.items()),
            "pending_search_tests": [p["name"] for p in queue["pending"]],
            "pending_network": state.get("pending"), "error": state.get("error")}
+    if state.get("training_deferred_for"):
+        out["training_deferred_for"] = state["training_deferred_for"]
     if state.get("pending"):
         candidate = pathlib.Path(state["pending"]["candidate"]).name
         result = read(data / "forge" / f"sprt-{candidate}.json", {})

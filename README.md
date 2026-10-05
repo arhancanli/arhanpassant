@@ -25,6 +25,8 @@ Version 0.12.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden unit
 
 Search changes are tested the same way, locally or on the cloud fleet: 6 were accepted (node-based time management, pawn-structure evaluation correction, piece-set evaluation correction, deeper/shallower re-searches, mop-up endgame knowledge, a history bonus for the move that made the opponent fail low), and 7 did not. Every result, including the failures, is in [`forge/tests.json`](forge/tests.json).
 
+On Apple Silicon, the exact NEON neural output kernel measured 59.9% more nodes per second than the preceding optimized scalar build in nine alternating warmed benchmark runs per build. At the same 8+0.08 time control and with the same 0.12 network, it also passed a separate strength gate in 448 games: an estimated +80.5 Elo (95% interval +63.2 to +98.3). Both executable hashes and the test result are recorded in [`forge/tests.json`](forge/tests.json).
+
 **Measured strength: about 3,426 on the CCRL Blitz scale** (95% interval 3,414 to 3,437 from game statistics alone), from 2,284 games at 60+0.6 against 8 versions of Demolito, Ethereal, Laser, Stash and Weiss with published CCRL Blitz ratings: each opponent's rating is read from the CCRL list and one rating is fitted to the 6 matches the engine scores 20-80% in; at 10+0.1, 5,200 games give 3,448 (3,436 to 3,459). Stronger engines are too far ahead to rate against: Stockfish 17.1 (CCRL 3,771) 3.9% of 400 games, Koivisto 9.0 (CCRL 3,632) 10.6% of 400 games. The matches ran before the last search changes were accepted. These are our own matches on cloud machines, not an official CCRL rating, and the opponents' own ratings carry another 10-20 Elo of uncertainty. Details: [`forge/engines.json`](forge/engines.json).
 
 An earlier measurement, 480 games of version 0.7.0 against Stockfish 19 at fixed `UCI_Elo` levels of 2500, 2800, 3100, which Stockfish calibrates to the CCRL 40/4 list, gave about 3,026 ([`forge/anchors.json`](forge/anchors.json)).
@@ -125,7 +127,9 @@ python3 forge/macbook.py start
 ```
 
 This profile uses all 18 cores of the owner's Mac and starts a new training
-round after 20 million fresh positions. Other Macs can choose their own budget;
+round after 20 million fresh positions. If a search gate already has completed
+pairs, it finishes that gate before training can change the network; a queued
+test that has not started does not delay training. Other Macs can choose their own budget;
 omitting it reserves two cores. While search tests
 are pending, half the budget generates self-play and the rest plays test
 games. Network gates pause self-play and use the full budget; training uses

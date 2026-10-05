@@ -171,7 +171,8 @@ class ControllerTests(unittest.TestCase):
         loop.save_json(str(self.root / "forge/search.json"), {"accepted": {}, "history": []})
         def passed(**kw):
             result = {"decision": "H1", "games": 1104, "elo": 26.5, "elo_lo": 14.2,
-                      "elo_hi": 38.8, "sprt": {"llr": 2.98}, "config": {"champion_options": {}}}
+                      "elo_hi": 38.8, "sprt": {"llr": 2.98},
+                      "config": {"champion_options": {}, "candidate_options": {"cont4": "1"}}}
             local_gate.save(kw["out"], result)
             return result
         with patch.object(loop, "ROOT", str(self.root)), patch.object(local_gate, "gate", passed):
@@ -275,6 +276,75 @@ class ControllerTests(unittest.TestCase):
             return {"decision": "running"}
         with patch.object(local_gate, "gate", running):
             loop.search_batch(args, {"champion_net": str(net)}, str(self.root / "forge/log"))
+
+    def test_ready_training_finishes_the_checkpointed_search_after_restart(self):
+        engine, arena, net, book = (self.root / n for n in ("engine", "arena", "network", "book"))
+        for path in (engine, arena, net, book):
+            path.write_bytes(path.name.encode())
+        data = self.root / "selfplay/gen1/data.bin"
+        data.parent.mkdir(parents=True)
+        data.write_bytes(bytes(4 * 32))
+        item = {"name": "cont4", "change": "continuation", "opts": {"cont4": "1"}}
+        state = {"generation": 1, "champion_net": str(net), "champion_version": "0.12.0",
+                 "trained_on": 0, "attempts": 0, "sizes": {}}
+        loop.save_json(str(self.root / "forge/state.json"), state)
+        loop.save_json(str(self.root / "forge/queue.json"), {"pending": [item], "done": []})
+        loop.save_json(str(self.root / "forge/search.json"), {"accepted": {}, "history": []})
+        args = types.SimpleNamespace(data=str(self.root), engine=str(engine), arena=str(arena), book=str(book),
+                                     concurrency=1, cpu_budget=2, selfplay_threads=1, tc="8+0.08",
+                                     max_games=12, batch_games=4)
+        _, _, _, out = loop.search_evidence(args, state, item)
+        def arena_batch(cmd, logfile):
+            local_gate.save(cmd[cmd.index("--out") + 1], {
+                "seed": int(cmd[cmd.index("--seed") + 1]), "games": 4, "wins": 1, "losses": 1,
+                "draws": 2, "penta": [0, 1, 0, 1, 0], "seconds": 1, "reasons": {"adjudicated": 4}})
+            return 0
+        with patch.object(local_gate, "run", arena_batch):
+            local_gate.gate(engine=str(engine), arena=str(arena), candidate=str(net), champion=str(net),
+                            book=str(book), tc="8+0.08", concurrency=1, max_games=12,
+                            elo0=0, elo1=5, cand_opts=item["opts"], champ_opts={},
+                            out=out, logfile=str(self.root / "log"), log=lambda _: None,
+                            batch_games=4, max_batches=1)
+        # A freshly started controller has no live generator. Planning its
+        # upcoming allocation must preserve the old gate's concurrency.
+        self.assertTrue(loop.search_has_progress(args, state, item, ready=True))
+        argv = ["loop.py", "--data", str(self.root), "--engine", str(engine), "--arena", str(arena),
+                "--book", str(book), "--cpu-budget", "2", "--selfplay-threads", "1", "--concurrency", "1",
+                "--min-new", "1", "--max-games", "12", "--batch-games", "4", "--min-free-gb", "0",
+                "--local-search", "--once", "--no-publish"]
+        with patch.object(sys, "argv", argv), patch.object(loop, "ensure_selfplay"), patch.object(loop.signal, "signal"):
+            with patch.object(loop, "run", side_effect=AssertionError("training preempted the active test")):
+                with patch.object(local_gate, "run", arena_batch), contextlib.redirect_stdout(io.StringIO()):
+                    loop.main()
+        saved = json.loads((self.root / "forge/state.json").read_text())
+        self.assertEqual(saved["training_deferred_for"], "cont4")
+        self.assertEqual(saved["attempts"], 0)
+        self.assertEqual(json.loads(pathlib.Path(out).read_text())["games"], 8)
+        changed = {**item, "opts": {"cont4": "0"}}
+        self.assertFalse(loop.search_has_progress(args, state, changed, ready=True))
+        # A name in the queue alone must not postpone a ready training round.
+        self.assertFalse(loop.search_has_progress(args, state, {**item, "name": "unstarted"}, ready=True))
+        saved_gate = json.loads(pathlib.Path(out).read_text())
+        saved_gate["games"] = 0
+        local_gate.save(out, saved_gate)
+        self.assertFalse(loop.search_has_progress(args, state, item, ready=True))
+
+    def test_acceptance_gap_is_recovered_before_a_new_network_changes_the_test_identity(self):
+        engine, net = self.root / "engine", self.root / "network"
+        engine.write_bytes(b"engine")
+        net.write_bytes(b"network")
+        args = types.SimpleNamespace(data=str(self.root), engine=str(engine))
+        state = {"champion_net": str(net)}
+        item = {"name": "cont4", "opts": {"cont4": "1"}}
+        _, _, _, out = loop.search_evidence(args, state, item)
+        local_gate.save(out, {"decision": "H1", "games": 1104,
+                              "config": {"champion_options": {}, "candidate_options": {"cont4": "1"}}})
+        loop.save_json(str(self.root / "forge/search.json"), {
+            "accepted": {"cont4": "1"}, "history": [{"evidence": pathlib.Path(out).name}]})
+        self.assertTrue(loop.search_has_progress(args, state, item, ready=True))
+        self.assertFalse(loop.accepted_checkpoint(json.loads(pathlib.Path(out).read_text()),
+                                                  {**item, "opts": {"cont4": "0"}},
+                                                  json.loads((self.root / "forge/search.json").read_text()), out))
 
 
 if __name__ == "__main__":

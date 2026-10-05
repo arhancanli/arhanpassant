@@ -87,12 +87,11 @@ def summarize(result):
                           "inconclusive" if result["games"] >= config["max_games"] else "running")
 
 
-def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games,
-         elo0, elo1, cand_opts, champ_opts, out, logfile, log, batch_games=64,
-         max_batches=None, baseline_engine=None):
+def configuration(*, engine, arena, candidate, champion, book, tc, concurrency, max_games,
+                  elo0, elo1, cand_opts, champ_opts, batch_games=64, baseline_engine=None):
     engine = os.path.realpath(engine)
     baseline_engine = os.path.realpath(baseline_engine or engine)
-    config = {
+    return {
         "engine": os.path.realpath(engine), "engine_sha256": digest(engine),
         "baseline_engine": os.path.realpath(baseline_engine), "baseline_sha256": digest(baseline_engine),
         "arena_sha256": digest(arena), "candidate": candidate, "candidate_sha256": digest(candidate) if candidate else None,
@@ -102,6 +101,17 @@ def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games
         "champion_options": champ_opts, "batch_games": batch_games,
         "execution_profile": os.environ.get("ARHANPASSANT_EXECUTION_PROFILE", "manual"),
     }
+
+
+def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games,
+         elo0, elo1, cand_opts, champ_opts, out, logfile, log, batch_games=64,
+         max_batches=None, baseline_engine=None):
+    engine = os.path.realpath(engine)
+    baseline_engine = os.path.realpath(baseline_engine or engine)
+    config = configuration(engine=engine, arena=arena, candidate=candidate, champion=champion,
+                           book=book, tc=tc, concurrency=concurrency, max_games=max_games,
+                           elo0=elo0, elo1=elo1, cand_opts=cand_opts, champ_opts=champ_opts,
+                           batch_games=batch_games, baseline_engine=baseline_engine)
     inputs = {engine: config["engine_sha256"], baseline_engine: config["baseline_sha256"],
               arena: config["arena_sha256"], book: config["book_sha256"]}
     if candidate:

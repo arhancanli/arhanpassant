@@ -234,6 +234,51 @@ def gate_workers(args, state, threads=1):
     return workers
 
 
+def search_evidence(args, state, item):
+    engine = os.path.expanduser(item.get("candidate_engine", args.engine))
+    baseline = os.path.expanduser(item.get("baseline_engine", engine))
+    identity = local_gate.build_identity(engine, state["champion_net"], baseline)
+    name = re.sub(r"[^A-Za-z0-9_.-]", "_", item["name"])
+    out = os.path.join(args.data, "forge", "tests", f"local-{name}-{identity}.json")
+    return engine, baseline, identity, out
+
+
+def accepted_checkpoint(previous, item, search, out):
+    if not previous or previous["decision"] != "H1":
+        return False
+    config = previous.get("config", {})
+    if not isinstance(config.get("champion_options"), dict) or not isinstance(config.get("candidate_options"), dict):
+        return False
+    return (any(e.get("evidence") == os.path.basename(out) for e in search["history"])
+            and config["candidate_options"] == {**config["champion_options"], **item["opts"]}
+            and all(config["champion_options"].get(k) == v for k, v in item.get("common_options", {}).items()))
+
+
+def search_has_progress(args, state, item, ready):
+    """Finish an existing gate before training changes its network. A queued
+    test with no completed pairs does not delay a ready training round."""
+    engine, baseline, _, out = search_evidence(args, state, item)
+    previous = load_json(out, None)
+    if not previous or previous.get("games", 0) == 0:
+        return False
+    search = load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}, "history": []})
+    if accepted_checkpoint(previous, item, search, out):
+        return True  # Recover acceptance before dequeuing, before a new network changes the filename.
+    threads = search_threads_for(args, item)
+    # At startup the old generator has been stopped; plan the allocation that
+    # ensure_selfplay will establish, rather than mistaking the gap for a new profile.
+    playing = selfplay_workers(args, item) if ready else 0
+    workers = min(args.concurrency, (args.cpu_budget - playing) // threads)
+    base = {**search["accepted"], **item.get("common_options", {})}
+    elo0, elo1 = item.get("bounds", [0.0, 5.0])
+    expected = local_gate.configuration(engine=engine, baseline_engine=baseline, arena=args.arena,
+                                         candidate=state["champion_net"], champion=state["champion_net"],
+                                         book=args.book, tc=args.tc, concurrency=workers, max_games=args.max_games,
+                                         elo0=elo0, elo1=elo1, cand_opts={**base, **item["opts"]}, champ_opts=base,
+                                         batch_games=args.batch_games)
+    return previous.get("config") == expected
+
+
 def gate(args, candidate, state, logfile):
     out = os.path.join(args.data, "forge", f"sprt-{os.path.basename(candidate)}.json")
     opts = search_settings(args)
@@ -269,18 +314,13 @@ def search_batch(args, state, logfile):
     threads = search_threads_for(args, item)
     base = {**search_settings(args), **item.get("common_options", {})}
     elo0, elo1 = item.get("bounds", [0.0, 5.0])
-    engine = os.path.expanduser(item.get("candidate_engine", args.engine))
-    baseline = os.path.expanduser(item.get("baseline_engine", engine))
-    identity = local_gate.build_identity(engine, state["champion_net"], baseline)
+    engine, baseline, identity, out = search_evidence(args, state, item)
     directory = os.path.join(args.data, "forge", "tests")
     os.makedirs(directory, exist_ok=True)
-    name = re.sub(r"[^A-Za-z0-9_.-]", "_", item["name"])
-    out = os.path.join(directory, f"local-{name}-{identity}.json")
     workers = gate_workers(args, state, threads)
     previous = load_json(out, None)
     search = load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}, "history": []})
-    if (previous and previous["decision"] != "running"
-            and any(e.get("evidence") == os.path.basename(out) for e in search["history"])):
+    if accepted_checkpoint(previous, item, search, out):
         # Recover a crash after acceptance but before dequeuing with the
         # original baseline rather than testing the change against itself.
         result = previous
@@ -417,12 +457,16 @@ def main():
 
     forge_dir = os.path.join(args.data, "forge")
     os.makedirs(forge_dir, exist_ok=True)
-    controller_lock = open(os.path.join(forge_dir, "loop.lock"), "a")
-    try:
-        fcntl.flock(controller_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        log("another improvement controller owns this data directory; exiting")
-        return
+    with open(os.path.join(forge_dir, "loop.lock"), "a") as controller_lock:
+        try:
+            fcntl.flock(controller_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            log("another improvement controller owns this data directory; exiting")
+            return
+        run_controller(args, forge_dir)
+
+
+def run_controller(args, forge_dir):
     state_path = os.path.join(forge_dir, "state.json")
     state = load_json(state_path, {"generation": 0, "champion_net": None, "champion_version": "0.1.0", "trained_on": 0, "attempts": 0})
     logfile = os.path.join(forge_dir, "loop.log")
@@ -442,6 +486,7 @@ def main():
             state["updated"] = dt.datetime.now(dt.timezone.utc).isoformat()
             try:
                 state.pop("error", None)
+                state.pop("training_deferred_for", None)
                 if state.get("pending"):
                     stop_selfplay(args, state)
                     state["phase"] = "network gate"
@@ -463,16 +508,22 @@ def main():
                 snapshot = {f: size(f) for f in files if size(f)}
                 n = sum(v // REC for v in snapshot.values())
                 fresh = grown_since(files, state["sizes"]) if "sizes" in state else n - state["trained_on"]
-                if fresh < args.min_new:
-                    queue = load_json(os.path.join(forge_dir, "queue.json"), {"pending": []})
-                    testing = args.local_search and bool(queue["pending"]) and args.cpu_budget > 1
+                queue = load_json(os.path.join(forge_dir, "queue.json"), {"pending": []})
+                testing = args.local_search and bool(queue["pending"]) and args.cpu_budget > 1
+                finish_search = (fresh >= args.min_new and testing
+                                 and search_has_progress(args, state, queue["pending"][0], ready))
+                if fresh < args.min_new or finish_search:
                     threads = selfplay_workers(args, queue["pending"][0]) if testing else args.selfplay_threads
                     ensure_selfplay(args, state, threads)
                     state["phase"] = "search tests and self-play" if testing else "self-play" if ready else "disk pause"
                     state["positions"] = n
                     state["fresh_positions"] = fresh
+                    if finish_search:
+                        state["training_deferred_for"] = queue["pending"][0]["name"]
                     save_json(state_path, state)
                     log(f"{state['phase']}: {n:,} positions, {fresh:,} new of {args.min_new:,} needed")
+                    if finish_search:
+                        log(f"training ready; finishing existing search test {state['training_deferred_for']} first")
                     if testing:
                         search_batch(args, state, logfile)
                     if args.once:
