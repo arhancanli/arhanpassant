@@ -178,6 +178,13 @@ fresh search state. A preferred move has zero estimated loss; restricted
 searches that disagree with the recommendation are counted separately.
 Saved reports include input hashes and the reference build. These diagnostics
 guide experiments; they do not establish a strength gain or replace match gates.
+After every opponent has a completed initial batch, and again after the full
+suite finishes, the controller reviews up to 32 saved losses with Stockfish 19.
+The review replaces one external batch slot and uses its available cores beside
+self-play. It freezes game records, the reference binary and the analysis code;
+completed reviews survive restarts. Reports and bounded failure retries live in
+the milestone's `diagnostics/` folder. Pass `--loss-analysis-sample 0` to the loop
+to disable reviews, or another sample size to change their budget.
 
 For a network-capacity experiment, append `--train-hidden 1024` when installing
 the Mac profile. The next training round uses that width and the normal gate

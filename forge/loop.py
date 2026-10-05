@@ -27,6 +27,7 @@ import time
 
 import local_gate
 import milestones
+import diagnostics
 import publish_data
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -466,6 +467,8 @@ def main():
     ap.add_argument("--no-publish", action="store_true", help="keep promotion and search ledgers local")
     ap.add_argument("--keep-awake", action="store_true", help="prevent macOS idle sleep for this controller's lifetime")
     ap.add_argument("--milestone-catalog", help="verified local opponents; alternate milestone matches with search gates")
+    ap.add_argument("--loss-analysis-sample", type=int, default=32,
+                    help="review this many saved losses after opponent coverage and suite completion; 0 disables")
     args = ap.parse_args()
     if args.keep_awake and sys.platform != "darwin":
         ap.error("--keep-awake requires macOS caffeinate")
@@ -473,6 +476,8 @@ def main():
     args.cpu_budget = max(1, min(args.cpu_budget, os.cpu_count() or 1))
     args.selfplay_threads = min(args.selfplay_threads or args.cpu_budget, args.cpu_budget)
     args.concurrency = min(args.concurrency, args.cpu_budget)
+    if args.loss_analysis_sample < 0:
+        ap.error("loss-analysis-sample must be nonnegative")
     if min(args.selfplay_threads, args.concurrency, args.poll_seconds, args.chunk_positions,
            args.train_workers, args.train_threads, args.max_data_gb) <= 0 or args.min_free_gb < 0:
         ap.error("CPU, training, polling and storage budgets must be positive")
@@ -545,12 +550,14 @@ def run_controller(args, forge_dir):
                 queue = load_json(os.path.join(forge_dir, "queue.json"), {"pending": []})
                 testing = args.local_search and bool(queue["pending"]) and args.cpu_budget > 1
                 external = bool(args.milestone_catalog and milestones.pending(args.data))
+                review = bool(args.milestone_catalog and args.loss_analysis_sample
+                              and diagnostics.choose(args.data, args.loss_analysis_sample))
                 finish_search = (fresh >= args.min_new and testing
                                  and search_has_progress(args, state, queue["pending"][0], ready))
                 if fresh < args.min_new or finish_search:
                     threads = (selfplay_workers(args, queue["pending"][0]) if testing else
                                min(args.selfplay_threads, args.cpu_budget - max(1, args.cpu_budget // 2))
-                               if external else args.selfplay_threads)
+                               if external or review else args.selfplay_threads)
                     ensure_selfplay(args, state, threads)
                     state["phase"] = ("search tests and self-play" if testing else "milestone matches and self-play"
                                       if external else "self-play" if ready else "disk pause")
@@ -564,7 +571,9 @@ def run_controller(args, forge_dir):
                         log(f"training ready; finishing existing search test {state['training_deferred_for']} first")
                     if testing:
                         search_batch(args, state, logfile)
-                    if external:
+                    analysed = (review and diagnostics.advance(
+                        args, state, gate_workers(args, state), logfile, log))
+                    if external and not analysed:
                         state["activity"] = "external milestone matches"
                         save_json(state_path, state)
                         milestones.advance(args, state, gate_workers(args, state), logfile, log)
@@ -572,7 +581,7 @@ def run_controller(args, forge_dir):
                         save_json(state_path, state)
                     if args.once:
                         return
-                    if not testing and not external:
+                    if not testing and not external and not analysed:
                         time.sleep(args.poll_seconds)
                     continue
 

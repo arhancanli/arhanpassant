@@ -108,6 +108,8 @@ def status(data):
         out["external_milestone"] = {k: current[k] for k in ("identity", "version", "games", "target_games", "status")}
     if state.get("activity"):
         out["activity"] = state["activity"]
+    if state.get("loss_diagnostics"):
+        out["loss_diagnostics"] = state["loss_diagnostics"]
     if state.get("pending"):
         candidate = pathlib.Path(state["pending"]["candidate"]).name
         result = read(data / "forge" / f"sprt-{candidate}.json", {})

@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
 from concurrent.futures import ThreadPoolExecutor
 
@@ -160,9 +161,10 @@ def main():
                            for k, v in by_phase.items()},
               "game_turned_in": turned, "worst_moves": worst}
     if args.out:
-        with open(args.out, "w") as f:
+        with open(args.out + ".tmp", "w") as f:
             json.dump(report, f, indent=2)
             f.write("\n")
+        os.replace(args.out + ".tmp", args.out)
     print(f"{len(sample)} of {len(losses)} losses analysed at {args.nodes:,} nodes")
     for k in ("opening", "middlegame", "endgame"):
         v = report["by_phase"].get(k)
