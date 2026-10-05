@@ -210,6 +210,21 @@ models, split by board and side to move, use identical rows and training resourc
 and require a fresh strength gate. This tool does not alter live self-play or
 promote a network.
 
+`trainer/paired.py prepare` builds matching original-target and teacher-target
+training/validation files from a hash-validated WDL corpus. Its split groups
+identical boards and sides to move together, even when their clocks or outcomes
+differ. Bounded anchor prefixes are identical in both controls; teacher boards
+are excluded from anchor replay. Outputs stay outside live self-play.
+
+`trainer/paired.py train` fine-tunes both controls from a saved PyTorch checkpoint
+only after its quantized export reproduces the accepted champion byte for byte.
+It uses fixed epochs, identical batch orders and optimizer settings, and reports
+both target losses and outcome error on the same held-out rows. Partial final
+batches are included. Every exported model must agree with native integer
+evaluation. Use `--pilot` for a mechanics check. Held-out groups are excluded from
+this study's fine-tuning and replay; historical champion pretraining may have
+included them. Model losses and pilot results do not replace fresh strength gates.
+
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
 reduces concurrent games to fit their threads within the remaining CPU budget.
