@@ -192,6 +192,13 @@ compares the candidate with the current champion before any promotion. Omit
 the option to choose capacity from the retained dataset size. This makes larger
 models testable without expanding the self-play storage budget.
 
+Training carries partial record buffers into the next batch and visits every
+frozen training and validation row exactly once per pass. It uses one final
+partial batch, weights losses and throughput by actual record counts, and sizes
+the learning-rate schedule from the resulting number of optimizer steps. A
+shortened frozen input or incomplete epoch fails the round instead of silently
+reducing its dataset. Appended records remain outside the frozen prefix.
+
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
 reduces concurrent games to fit their threads within the remaining CPU budget.

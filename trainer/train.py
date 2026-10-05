@@ -24,7 +24,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from stream import prefetch, prepare_file_limit
+from stream import complete_batches, frozen_record_count, prefetch, prepare_file_limit
 
 REC = 32
 QA, QB, SCALE = 255, 64, 400.0
@@ -76,7 +76,7 @@ class Dataset:
         self.maps, blocks = [], []
         total = 0
         for f in files:
-            n = min(os.path.getsize(f), file_sizes[f] if file_sizes is not None else os.path.getsize(f)) // REC
+            n = frozen_record_count(os.path.getsize(f), file_sizes[f] if file_sizes is not None else None, REC)
             if n == 0:
                 continue
             if max_positions and total + n > max_positions:
@@ -103,12 +103,13 @@ class Dataset:
         order = list(blocks)
         if rng is not None:
             rng.shuffle(order)
-        for i in range(0, len(order), buffer_blocks):
-            buf = np.concatenate([self.read(b) for b in order[i : i + buffer_blocks]])
-            if rng is not None:
-                buf = buf[rng.permutation(len(buf))]
-            for j in range(0, len(buf) - batch_size + 1, batch_size):
-                yield buf[j : j + batch_size]
+        def buffers():
+            for i in range(0, len(order), buffer_blocks):
+                buf = np.concatenate([self.read(b) for b in order[i : i + buffer_blocks]])
+                if rng is not None:
+                    buf = buf[rng.permutation(len(buf))]
+                yield buf
+        yield from complete_batches(buffers(), batch_size, np.concatenate)
 
     def batches(self, blocks, batch_size, rng=None, workers=4):
         """Decoded batches; decoding runs on several threads (NumPy releases the GIL)."""
@@ -242,7 +243,10 @@ def main():
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    file_sizes = json.load(open(args.manifest)) if args.manifest else None
+    file_sizes = None
+    if args.manifest:
+        with open(args.manifest) as manifest:
+            file_sizes = json.load(manifest)
     data = Dataset(list(file_sizes) if file_sizes is not None else args.data,
                    args.val_every, args.max_positions, file_sizes)
     if data.n_train < args.batch or data.n_val < args.batch:
@@ -251,7 +255,7 @@ def main():
 
     net = Net(args.hidden).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=0.0)
-    steps_per_epoch = data.n_train // args.batch
+    steps_per_epoch = -(-data.n_train // args.batch)
     total = steps_per_epoch * args.epochs
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 0.5 * (1 + math.cos(math.pi * min(s, total) / total)) * 0.99 + 0.01)
 
@@ -265,30 +269,41 @@ def main():
         tot, n = 0.0, 0
         with torch.no_grad():
             for b, dec in data.batches(data.val_blocks, args.batch, workers=args.workers):
-                tot += float(loss_of(*to_inputs(dec, device))) * b
+                value = float(loss_of(*to_inputs(dec, device)))
+                if not math.isfinite(value):
+                    raise RuntimeError("nonfinite validation loss")
+                tot += value * b
                 n += b
+        if n != data.n_val:
+            raise RuntimeError(f"validation covered {n} of {data.n_val} frozen records")
         net.train()
-        return tot / max(n, 1)
+        return tot / n
 
     best = validate()
     print(f"epoch 0 val {best:.6f}", flush=True)
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        run, cnt = 0.0, 0
+        run, cnt, records = 0.0, 0, 0
         for b, dec in prefetch(data.batches(data.train_blocks, args.batch, rng, workers=args.workers)):
             loss = loss_of(*to_inputs(dec, device))
+            value = float(loss.detach())
+            if not math.isfinite(value):
+                raise RuntimeError("nonfinite training loss")
             opt.zero_grad(set_to_none=True)
             loss.backward()
             opt.step()
             sched.step()
             with torch.no_grad():
                 net.out.weight.clamp_(-1.98, 1.98)
-            run += float(loss.detach())
+            run += value * b
             cnt += 1
+            records += b
+        if records != data.n_train or cnt != steps_per_epoch:
+            raise RuntimeError(f"training covered {records} of {data.n_train} frozen records in {cnt} of {steps_per_epoch} steps")
         val = validate()
-        rate = cnt * args.batch / (time.time() - t0)
+        rate = records / (time.time() - t0)
         kept = val < best
-        print(f"epoch {epoch} train {run / max(cnt, 1):.6f} val {val:.6f} lr {sched.get_last_lr()[0]:.2e} {rate:,.0f} pos/s{' (best, saved)' if kept else ''}", flush=True)
+        print(f"epoch {epoch} train {run / records:.6f} val {val:.6f} lr {sched.get_last_lr()[0]:.2e} {rate:,.0f} pos/s records {records:,}/{data.n_train:,} steps {cnt}/{steps_per_epoch}{' (best, saved)' if kept else ''}", flush=True)
         if kept:
             # Keep the network from the epoch with the lowest held-out loss.
             best = val
