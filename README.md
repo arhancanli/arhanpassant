@@ -21,7 +21,7 @@ minutes.
 
 ## Status
 
-Version 0.11.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 353.9M self-play positions. It is the 10th network in a row to pass the gate against its predecessor; every promotion is recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.
+Version 0.12.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 381.8M self-play positions. It passed its predecessor in 2,560 paired games at 8+0.08, gaining an estimated 12.4 Elo (95% interval 4.6 to 20.2). It is the 11th network in a row to pass the gate; every promotion is recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.
 
 Search changes are tested the same way, locally or on the cloud fleet: 6 were accepted (node-based time management, pawn-structure evaluation correction, piece-set evaluation correction, deeper/shallower re-searches, mop-up endgame knowledge, a history bonus for the move that made the opponent fail low), and 7 did not. Every result, including the failures, is in [`forge/tests.json`](forge/tests.json).
 
