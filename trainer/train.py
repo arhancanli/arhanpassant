@@ -280,6 +280,9 @@ def main():
         return tot / n
 
     best = validate()
+    # The initial model is the best checkpoint until an epoch improves on it.
+    export(net, args.out)
+    torch.save(net.state_dict(), args.out + ".pt")
     print(f"epoch 0 val {best:.6f}", flush=True)
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
