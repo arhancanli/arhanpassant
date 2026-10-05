@@ -37,6 +37,10 @@ pub struct MovePicker {
     skip_quiets: bool,
     /// Quiescence: only noisy moves (unless in check), no good/bad split.
     qsearch: bool,
+    /// Full search experiment: keep forcing checking captures in the early
+    /// noisy stage even when their static exchange score is negative.
+    /// This changes ordering only; it does not bypass search pruning.
+    pub checking_captures: bool,
 }
 
 impl MovePicker {
@@ -59,6 +63,7 @@ impl MovePicker {
             bad_idx: 0,
             skip_quiets: false,
             qsearch: false,
+            checking_captures: false,
         }
     }
 
@@ -123,7 +128,9 @@ impl MovePicker {
                 }
                 Stage::GoodNoisy => {
                     while let Some((m, score)) = self.pick_best() {
-                        if self.qsearch || see_ge(pos, m, -score / 64) {
+                        if self.qsearch || see_ge(pos, m, -score / 64)
+                            || (self.checking_captures && pos.gives_check(m))
+                        {
                             return Some(m);
                         }
                         self.bad[self.bad_len] = m;
@@ -176,6 +183,67 @@ impl MovePicker {
                     self.stage = Stage::Done;
                 }
                 Stage::Done => return None,
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ordered(pos: &Position, early: bool, hash: Move, skip: bool) -> Vec<Move> {
+        let history = History::new();
+        let mut picker = MovePicker::new(pos, hash, [Move::NULL; 2], Move::NULL, ContKey::NONE, ContKey::NONE);
+        picker.checking_captures = early;
+        if skip {
+            picker.skip_quiets();
+        }
+        let mut result = Vec::new();
+        while let Some(m) = picker.next(pos, &history) {
+            assert!(pos.is_legal(m));
+            assert!(!result.contains(&m), "duplicate {m}");
+            result.push(m);
+        }
+        result
+    }
+
+    fn attack() -> Position {
+        // The confirmed lost-game branch: Bxh7+ loses material in a static
+        // exchange, but starts the forcing mating attack missed by the engine.
+        Position::from_fen("r2qnrk1/pb2bppp/1p2p3/n2pP3/5B1P/P1pB1Q1N/1PP2PP1/2KR3R w - - 0 7").unwrap()
+    }
+
+    #[test]
+    fn losing_checking_capture_moves_before_quiets_without_changing_legal_set() {
+        let pos = attack();
+        let sacrifice = pos.legal_moves().iter().find(|m| m.to_uci() == "d3h7").unwrap();
+        assert!(sacrifice.is_noisy() && pos.gives_check(sacrifice));
+        assert!(!see_ge(&pos, sacrifice, 0));
+        let old = ordered(&pos, false, Move::NULL, false);
+        let early = ordered(&pos, true, Move::NULL, false);
+        assert!(old.iter().position(|m| *m == sacrifice).unwrap() > old.iter().position(|m| m.is_quiet()).unwrap());
+        assert!(early.iter().position(|m| *m == sacrifice).unwrap() < early.iter().position(|m| m.is_quiet()).unwrap());
+        let mut old_set = old.iter().map(|m| m.to_uci()).collect::<Vec<_>>();
+        let mut new_set = early.iter().map(|m| m.to_uci()).collect::<Vec<_>>();
+        old_set.sort();
+        new_set.sort();
+        assert_eq!(old_set, new_set);
+        assert_eq!(early.len(), pos.legal_moves().len());
+    }
+
+    #[test]
+    fn checking_capture_is_not_duplicated_as_hash_move_or_lost_when_quiets_skipped() {
+        let pos = attack();
+        let sacrifice = pos.legal_moves().iter().find(|m| m.to_uci() == "d3h7").unwrap();
+        for skip in [false, true] {
+            let hashed = ordered(&pos, true, sacrifice, skip);
+            assert_eq!(hashed[0], sacrifice);
+            assert_eq!(hashed.iter().filter(|m| **m == sacrifice).count(), 1);
+            let unhash = ordered(&pos, true, Move::NULL, skip);
+            assert!(unhash.contains(&sacrifice));
+            if skip {
+                assert!(unhash.iter().all(|m| m.is_noisy()));
             }
         }
     }

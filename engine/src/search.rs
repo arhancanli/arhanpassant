@@ -592,6 +592,7 @@ impl Searcher {
         let counter = if c1.piece != 12 { self.history.counter[c1.piece as usize][c1.to as usize] } else { Move::NULL };
         let mut picker = MovePicker::new(pos, tt_move, self.stack[ply].killers, counter, c1, c2);
         picker.c4 = c4;
+        picker.checking_captures = p::cap_checks() != 0;
         let mut best_score = -INF;
         let mut best_move = Move::NULL;
         let mut moves_searched = 0usize;
