@@ -171,6 +171,17 @@ class ControllerTests(unittest.TestCase):
                 macbook.bootstrap("gui/501")
         self.assertEqual(launch.call_count, 2)
 
+    def test_search_reclaims_cores_when_a_generator_dies_or_disk_pauses(self):
+        args = types.SimpleNamespace(cpu_budget=18, concurrency=18)
+        state = {"selfplay_pid": 23, "selfplay_threads": 9}
+        with patch.object(loop, "alive", return_value=True):
+            self.assertEqual(loop.gate_workers(args, state), 9)
+        with patch.object(loop, "alive", return_value=False):
+            self.assertEqual(loop.gate_workers(args, state), 18)
+            loop.stop_selfplay(self.args, state)
+        self.assertNotIn("selfplay_pid", state)
+        self.assertEqual(state["selfplay_threads"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -107,6 +107,7 @@ def run(cmd, logfile):
 def stop_selfplay(args, state):
     """Only stop a PID that still belongs to this data directory's generator."""
     pid = state.pop("selfplay_pid", None)
+    state["selfplay_threads"] = 0
     if not alive(pid):
         return
     command = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
@@ -203,6 +204,11 @@ def search_settings(args):
     return load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}})["accepted"]
 
 
+def gate_workers(args, state):
+    playing = state.get("selfplay_threads", 0) if alive(state.get("selfplay_pid")) else 0
+    return max(1, min(args.concurrency, args.cpu_budget - playing))
+
+
 def gate(args, candidate, state, logfile):
     out = os.path.join(args.data, "forge", f"sprt-{os.path.basename(candidate)}.json")
     opts = search_settings(args)
@@ -242,7 +248,7 @@ def search_batch(args, state, logfile):
     os.makedirs(directory, exist_ok=True)
     name = re.sub(r"[^A-Za-z0-9_.-]", "_", item["name"])
     out = os.path.join(directory, f"local-{name}-{identity}.json")
-    workers = min(args.concurrency, args.cpu_budget - state.get("selfplay_threads", 0))
+    workers = gate_workers(args, state)
     previous = load_json(out, None)
     search = load_json(os.path.join(args.data, "forge", "search.json"), {"accepted": {}, "history": []})
     if (previous and previous["decision"] != "running"
@@ -443,7 +449,8 @@ def main():
                         search_batch(args, state, logfile)
                     if args.once:
                         return
-                    time.sleep(args.poll_seconds)
+                    if not testing:
+                        time.sleep(args.poll_seconds)
                     continue
 
                 stop_selfplay(args, state)

@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 
+import local_gate
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LABEL = "com.arhanpassant.engine-forge"
 PLIST = pathlib.Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
@@ -80,16 +82,22 @@ def status(data):
                                capture_output=True, text=True).stdout.strip()
     out = {"supervised": service.returncode == 0, "champion": state.get("champion_version"),
            "phase": state.get("phase"), "cpu_budget": state.get("cpu_budget"),
-           "selfplay_running": " datagen " in generator, "selfplay_threads": state.get("selfplay_threads"),
+           "selfplay_running": " datagen " in generator,
+           "selfplay_threads": state.get("selfplay_threads", 0) if " datagen " in generator else 0,
            "positions": sum(v // 32 for v in sizes.values()),
            "fresh_positions": sum(max(0, n - snapshot.get(p, 0)) // 32 for p, n in sizes.items()),
            "pending_search_tests": [p["name"] for p in queue["pending"]],
            "pending_network": state.get("pending"), "error": state.get("error")}
-    if queue["pending"]:
-        name = queue["pending"][0]["name"]
-        results = sorted((data / "forge/tests").glob(f"local-{name}-*.json"), key=lambda p: p.stat().st_mtime)
-        if results:
-            result = read(results[-1], {})
+    if state.get("pending"):
+        candidate = pathlib.Path(state["pending"]["candidate"]).name
+        result = read(data / "forge" / f"sprt-{candidate}.json", {})
+        out["network_test"] = {k: result.get(k) for k in ("games", "elo", "elo_lo", "elo_hi", "sprt", "decision")}
+    if queue["pending"] and state.get("phase") == "search tests and self-play":
+        import re
+        name = re.sub(r"[^A-Za-z0-9_.-]", "_", queue["pending"][0]["name"])
+        identity = local_gate.digest(data / "bin/ap-current")[:12] + "-" + local_gate.digest(state["champion_net"])[:12]
+        result = read(data / "forge/tests" / f"local-{name}-{identity}.json", {})
+        if result:
             out["search_test"] = {k: result.get(k) for k in ("games", "elo", "elo_lo", "elo_hi", "sprt", "decision")}
     print(json.dumps(out, indent=2))
 
