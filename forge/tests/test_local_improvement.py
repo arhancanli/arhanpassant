@@ -163,6 +163,55 @@ class ControllerTests(unittest.TestCase):
         self.assertIn("--keep-awake", macbook.profile(self.root, 18, 20_000_000)["ProgramArguments"])
         self.assertNotIn("--keep-awake", macbook.profile(self.root, 18, 20_000_000, keep_awake=False)["ProgramArguments"])
 
+    def test_unchanged_training_keeps_champion_and_accounts_for_completed_data_without_a_gate(self):
+        net = self.root / "nets/champion.nnue"
+        net.write_bytes(b"accepted network")
+        records = self.root / "selfplay/gen1/data.bin"
+        records.parent.mkdir(parents=True)
+        records.write_bytes(bytes(4 * 32))
+        state = {"generation": 1, "champion_net": str(net), "champion_version": "0.12.0",
+                 "trained_on": 0, "attempts": 0, "sizes": {}}
+        loop.save_json(str(self.root / "forge/state.json"), state)
+        queue = {"pending": [{"name": "hist-prune", "opts": {"hist_prune": "3000"}}], "done": []}
+        loop.save_json(str(self.root / "forge/queue.json"), queue)
+        def train(cmd, logfile):
+            pathlib.Path(cmd[cmd.index("--out") + 1]).write_bytes(net.read_bytes())
+            return 0
+        argv = ["loop.py", "--data", str(self.root), "--min-new", "1", "--min-free-gb", "0",
+                "--once", "--no-publish"]
+        with patch.object(sys, "argv", argv), patch.object(loop.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(loop, "run", train), patch.object(loop, "gate", side_effect=AssertionError("unchanged model gated")):
+                loop.main()
+        saved = json.loads((self.root / "forge/state.json").read_text())
+        self.assertEqual(saved["trained_on"], 4)
+        self.assertEqual(saved["sizes"], {str(records): 128})
+        self.assertEqual(saved["attempts"], 1)
+        self.assertEqual(saved["champion_version"], "0.12.0")
+        self.assertEqual(saved["champion_net"], str(net))
+        self.assertNotIn("pending", saved)
+        self.assertEqual(saved["last_unchanged_training"]["sha256"], local_gate.digest(str(net)))
+        self.assertEqual(pathlib.Path(saved["last_unchanged_training"]["candidate"]).read_bytes(), net.read_bytes())
+        self.assertEqual(json.loads((self.root / "forge/queue.json").read_text()), queue)
+        self.assertTrue(records.exists())
+
+    def test_even_an_h1_cannot_promote_identical_network_bytes(self):
+        champion = self.root / "nets/champion.nnue"
+        candidate = self.root / "nets/candidate.nnue"
+        champion.write_bytes(b"accepted network")
+        candidate.write_bytes(champion.read_bytes())
+        state = {"champion_version": "0.12.0", "champion_net": str(champion), "generation": 11,
+                 "pending": {"candidate": str(candidate)}}
+        before = copy.deepcopy(state)
+        result = {"decision": "H1", "games": 1104, "elo": 26.5, "elo_lo": 14.2,
+                  "elo_hi": 38.8, "sprt": {"llr": 2.98}}
+        with patch.object(loop, "LEDGER", str(self.root / "ledger.json")):
+            with patch.object(loop.publish_data, "publish_quietly") as publish, contextlib.redirect_stdout(io.StringIO()):
+                loop.promote_if_passed(self.args, state, str(candidate), result, "identical candidate")
+        self.assertEqual(state, before)
+        self.assertFalse((self.root / "ledger.json").exists())
+        self.assertFalse((self.root / "nets/champion-0.13.0.nnue").exists())
+        publish.assert_not_called()
+
     def test_disk_retention_only_removes_complete_already_trained_chunks(self):
         old = self.root / "selfplay/gen1/old.bin"
         fresh = self.root / "selfplay/gen2/new.bin"

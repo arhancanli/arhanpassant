@@ -419,6 +419,9 @@ def promote_if_passed(args, state, candidate, result, change):
     log(f"gate result {result['decision']}: {result['games']} games, elo {result['elo']:+.1f} [{result['elo_lo']:+.1f}, {result['elo_hi']:+.1f}], llr {result['sprt']['llr']:.2f}")
     if result["decision"] != "H1":
         return
+    if state.get("champion_net") and local_gate.digest(candidate) == local_gate.digest(state["champion_net"]):
+        log("network bytes equal the champion; no new model to promote")
+        return
     major, minor, _ = (int(x) for x in state["champion_version"].split("."))
     version = f"{major}.{minor + 1}.0"
     champion = os.path.join(args.data, "nets", f"champion-{version}.nnue")
@@ -634,6 +637,16 @@ def run_controller(args, forge_dir):
                     raise RuntimeError("training failed; fresh-data progress retained for retry")
                 state["trained_on"] = n
                 state["sizes"] = snapshot
+                if state.get("champion_net") and local_gate.digest(candidate) == local_gate.digest(state["champion_net"]):
+                    state["last_unchanged_training"] = {
+                        "candidate": candidate, "sha256": local_gate.digest(candidate),
+                        "records": n, "attempt": state["attempts"],
+                    }
+                    save_json(state_path, state)
+                    log("trained network bytes equal the champion; saved training progress, no strength gate needed")
+                    if args.once:
+                        return
+                    continue
                 state["pending"] = {"candidate": candidate, "change": change}
                 save_json(state_path, state)
             except Exception as e:

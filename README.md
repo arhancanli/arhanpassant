@@ -209,6 +209,12 @@ learning rate of `1e-5`; training from scratch keeps its `1e-3` default. The
 hashes. This option does not change the supervised controller's training policy
 or promote a model; a fresh strength gate remains required.
 
+When a completed training round exports exactly the champion's network bytes,
+the controller records its trained-data progress and skips the duplicate gate.
+With an explicit champion file, an identical NNUE cannot create a new champion
+version, even if a separately requested statistical test returns H1. Search and executable comparisons still
+use their normal gates with the same network on both sides.
+
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller
 reduces concurrent games to fit their threads within the remaining CPU budget.
