@@ -114,12 +114,19 @@ def fresh_sample(data, state, count, seed):
     if total < count:
         raise ValueError("not enough fresh records")
     rng = random.Random(seed)
-    # Uniform sampling without replacement across all captured fresh prefixes.
-    attempts = rng.sample(range(total), min(total, count * 100))
+    # Reject already accepted offsets rather than allocating count * 100
+    # candidate indices up front. Every unseen eligible record still has the
+    # same chance on each draw, so accepted records are uniform without
+    # replacement. Memory grows with the returned corpus, not the draw budget.
+    accepted_offsets = set()
     selected, skipped = [], collections.Counter()
     with contextlib.ExitStack() as stack:
         handles = {}
-        for offset in attempts:
+        for _ in range(count * 100):
+            offset = rng.randrange(total)
+            if offset in accepted_offsets:
+                skipped["duplicate accepted offset"] += 1
+                continue
             source_index = bisect.bisect_right(endpoints, offset)
             source = sources[source_index]
             preceding = endpoints[source_index - 1] if source_index else 0
@@ -134,6 +141,7 @@ def fresh_sample(data, state, count, seed):
             if reason:
                 skipped[reason] += 1
                 continue
+            accepted_offsets.add(offset)
             selected.append({"index": len(selected), "source": path, "record_index": index,
                              "raw_hex": raw.hex(), "record_sha256": hashlib.sha256(raw).hexdigest(),
                              "fen": board.fen(), "original_white_cp": score, "result": result})

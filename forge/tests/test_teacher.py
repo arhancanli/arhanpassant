@@ -3,6 +3,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import chess
 import chess.engine
@@ -140,6 +141,18 @@ class TeacherTests(unittest.TestCase):
             self.assertEqual(summary["available_fresh_records"], 2)
             self.assertEqual({r["record_index"] for r in items}, {1, 2})
             self.assertTrue(all(r["raw_hex"] == BLACK.hex() for r in items))
+
+    def test_duplicate_draws_cannot_inflate_a_corpus_or_require_a_bulk_draw_pool(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "selfplay").mkdir()
+            (root / "selfplay/source.bin").write_bytes(CASTLE + BLACK + BLACK)
+            with patch.object(teacher.random.Random, "sample", side_effect=AssertionError("bulk allocation")):
+                with patch.object(teacher.random.Random, "randrange", side_effect=[0, 1, 1, 2]):
+                    items, summary = teacher.fresh_sample(root, {}, 2, 7)
+            self.assertEqual([r["record_index"] for r in items], [1, 2])
+            self.assertEqual(summary["skipped"]["duplicate accepted offset"], 1)
+            self.assertEqual(summary["skipped"]["castling rights unavailable"], 1)
 
 
 if __name__ == "__main__":
