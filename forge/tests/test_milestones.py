@@ -180,12 +180,16 @@ class MilestoneTests(unittest.TestCase):
         argv = ["loop.py", "--data", str(self.root), "--engine", self.args.engine, "--arena", self.args.arena,
                 "--book", self.args.book, "--cpu-budget", "18", "--selfplay-threads", "18", "--concurrency", "18",
                 "--milestone-catalog", self.args.milestone_catalog, "--local-search", "--once", "--min-free-gb", "0"]
-        with patch.object(sys, "argv", argv), patch.object(loop.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(sys, "argv", argv), patch.object(loop.os, "cpu_count", return_value=18):
+            self.run_controller_fixture(ensure, search, external)
+        self.assertEqual(calls, ["search", "external"])
+
+    def run_controller_fixture(self, ensure, search, external):
+        with patch.object(loop.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
             with patch.object(loop, "stop_selfplay"), patch.object(loop, "alive", return_value=True):
                 with patch.object(loop, "ensure_selfplay", ensure), patch.object(loop, "search_batch", search):
                     with patch.object(milestones, "advance", external):
                         loop.main()
-        self.assertEqual(calls, ["search", "external"])
 
 
 if __name__ == "__main__":
