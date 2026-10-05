@@ -7,7 +7,7 @@ import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import local_gate
@@ -119,6 +119,18 @@ class ControllerTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_idle_sleep_assertion_is_owned_by_the_controller_and_released_on_failure(self):
+        guard = Mock()
+        with patch.object(loop.subprocess, "Popen", return_value=guard) as spawn:
+            with self.assertRaisesRegex(RuntimeError, "controller failure"):
+                with loop.prevent_idle_sleep(True):
+                    raise RuntimeError("controller failure")
+        self.assertEqual(spawn.call_args.args[0], ["/usr/bin/caffeinate", "-i", "-w", str(loop.os.getpid())])
+        guard.terminate.assert_called_once()
+        guard.wait.assert_called_once_with(timeout=5)
+        self.assertIn("--keep-awake", macbook.profile(self.root, 18, 20_000_000)["ProgramArguments"])
+        self.assertNotIn("--keep-awake", macbook.profile(self.root, 18, 20_000_000, keep_awake=False)["ProgramArguments"])
 
     def test_disk_retention_only_removes_complete_already_trained_chunks(self):
         old = self.root / "selfplay/gen1/old.bin"

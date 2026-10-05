@@ -142,8 +142,11 @@ Self-play rotates into chunks of about one million positions. The controller
 limits generated data to 14 GiB and pauses generation below 8 GiB of free
 disk space. It retires only complete generated chunks that were included in
 a successful training round, preserving untrained data, networks and match
-evidence. The service restarts after a crash and starts at login. It makes
-progress while the Mac is awake; `status` reports its current phase, fresh
+evidence. The service restarts after a crash and starts at login. It prevents
+idle sleep with a macOS assertion owned by the controller; stopping the service
+releases it, and the display can still sleep. Pass `--allow-idle-sleep` when
+installing to omit this assertion. Manual sleep and closing the lid can still
+pause work. `status` reports idle-sleep protection, its current phase, fresh
 positions, pending tests and saved gate results.
 
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`

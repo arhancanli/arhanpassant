@@ -12,6 +12,7 @@ loop can be stopped and restarted at any time.
 """
 
 import argparse
+import contextlib
 import datetime as dt
 import fcntl
 import glob
@@ -102,6 +103,25 @@ def alive(pid):
 
 def run(cmd, logfile):
     return local_gate.run(cmd, logfile)
+
+
+@contextlib.contextmanager
+def prevent_idle_sleep(enabled):
+    """The macOS assertion belongs to this controller and expires if it dies."""
+    if not enabled:
+        yield
+        return
+    guard = subprocess.Popen(["/usr/bin/caffeinate", "-i", "-w", str(os.getpid())],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        yield
+    finally:
+        guard.terminate()
+        try:
+            guard.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            guard.kill()
+            guard.wait()
 
 
 def stop_selfplay(args, state):
@@ -442,7 +462,10 @@ def main():
     ap.add_argument("--train-workers", type=int, default=8)
     ap.add_argument("--train-threads", type=int, default=4)
     ap.add_argument("--no-publish", action="store_true", help="keep promotion and search ledgers local")
+    ap.add_argument("--keep-awake", action="store_true", help="prevent macOS idle sleep for this controller's lifetime")
     args = ap.parse_args()
+    if args.keep_awake and sys.platform != "darwin":
+        ap.error("--keep-awake requires macOS caffeinate")
     args.data = os.path.abspath(os.path.expanduser(args.data))
     args.cpu_budget = max(1, min(args.cpu_budget, os.cpu_count() or 1))
     args.selfplay_threads = min(args.selfplay_threads or args.cpu_budget, args.cpu_budget)
@@ -463,7 +486,8 @@ def main():
         except BlockingIOError:
             log("another improvement controller owns this data directory; exiting")
             return
-        run_controller(args, forge_dir)
+        with prevent_idle_sleep(args.keep_awake):
+            run_controller(args, forge_dir)
 
 
 def run_controller(args, forge_dir):
