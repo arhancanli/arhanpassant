@@ -119,15 +119,15 @@ On macOS, keep self-play, training, network gates and the queued search
 experiments running under a supervised service:
 
 ```sh
-python3 forge/macbook.py install --cpu-budget 18 --min-new 20000000
+python3 forge/macbook.py install --cpu-budget 18 --min-new 80000000 --train-hidden 512
 python3 forge/macbook.py status
 python3 forge/test_queue.py add NAME "change description" parameter=value
 python3 forge/macbook.py stop
 python3 forge/macbook.py start
 ```
 
-This profile uses all 18 cores of the owner's Mac and starts a new training
-round after 20 million fresh positions. If a search gate already has completed
+The current owner's profile uses an 18-core budget, 512 hidden units and starts a
+new training round after 80 million fresh positions. If a search gate already has completed
 pairs, it finishes that gate before training can change the network; a queued
 test that has not started does not delay training. Other Macs can choose their own budget;
 omitting it reserves two cores. While search tests
@@ -187,7 +187,7 @@ the milestone's `diagnostics/` folder. Pass `--loss-analysis-sample 0` to the lo
 to disable reviews, or another sample size to change their budget.
 
 For a network-capacity experiment, append `--train-hidden 1024` when installing
-the Mac profile. The next training round uses that width and the normal gate
+the Mac profile. Training rounds use that width and the normal gate
 compares the candidate with the current champion before any promotion. Omit
 the option to choose capacity from the retained dataset size. This makes larger
 models testable without expanding the self-play storage budget.
@@ -198,6 +198,16 @@ partial batch, weights losses and throughput by actual record counts, and sizes
 the learning-rate schedule from the resulting number of optimizer steps. A
 shortened frozen input or incomplete epoch fails the round instead of silently
 reducing its dataset. Appended records remain outside the frozen prefix.
+
+For an isolated fine-tuning study, provide both `--init-checkpoint model.nnue.pt`
+and `--init-network model.nnue` to `trainer/train.py`, with the matching hidden
+width and bucket counts. The checkpoint must re-export byte for byte to that
+NNUE before training starts. Output files cannot overwrite either input, and
+input hashes are checked again after training. Fine-tuning defaults to a
+learning rate of `1e-5`; training from scratch keeps its `1e-3` default. The
+`.init.json` sidecar records initialization, settings and selected checkpoint
+hashes. This option does not change the supervised controller's training policy
+or promote a model; a fresh strength gate remains required.
 
 For a multicore search experiment, pass `common.Threads=3` to `test_queue.py add`
 (saved as `"common_options": {"Threads": "3"}`). Both engines receive these options, and the controller

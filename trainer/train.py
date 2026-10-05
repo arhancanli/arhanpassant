@@ -24,6 +24,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+import initialize
 from stream import complete_batches, frozen_record_count, prefetch, prepare_file_limit
 
 REC = 32
@@ -222,7 +223,9 @@ def main():
     ap.add_argument("--output-buckets", type=int, default=1, help="output heads chosen by piece count")
     ap.add_argument("--epochs", type=int, default=12)
     ap.add_argument("--batch", type=int, default=16384)
-    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--lr", type=float, help="default: 1e-3 from scratch, 1e-5 from a verified checkpoint")
+    ap.add_argument("--init-checkpoint", help="initial PyTorch state dict; requires --init-network")
+    ap.add_argument("--init-network", help="NNUE which the initialization checkpoint must reproduce byte for byte")
     ap.add_argument("--wdl", type=float, default=0.3, help="weight of the game result in the target")
     ap.add_argument("--val-every", type=int, default=100, help="hold out every N-th block for validation")
     ap.add_argument("--max-positions", type=int, default=0)
@@ -232,10 +235,18 @@ def main():
     ap.add_argument("--threads", type=int, default=4, help="PyTorch CPU threads")
     ap.add_argument("--manifest", help="JSON mapping of input files to frozen byte lengths")
     args = ap.parse_args()
+    if bool(args.init_checkpoint) != bool(args.init_network):
+        ap.error("--init-checkpoint and --init-network must be supplied together")
+    if args.lr is None:
+        args.lr = 1e-5 if args.init_checkpoint else 1e-3
+    if not math.isfinite(args.lr) or args.lr < 0:
+        ap.error("learning rate must be finite and nonnegative")
     if args.workers < 1 or args.threads < 1 or args.epochs < 1 or args.batch < 1:
         ap.error("worker, thread, epoch and batch counts must be positive")
     if not 8 <= args.hidden <= 8192 or args.hidden % 8:
         ap.error("hidden width must be a multiple of eight between 8 and 8192")
+    if args.init_checkpoint:
+        initialize.protect_inputs(args.init_checkpoint, args.init_network, args.out)
     torch.set_num_threads(args.threads)
     torch.set_num_interop_threads(1)
     set_layout(args.input_buckets, args.output_buckets)
@@ -253,7 +264,18 @@ def main():
         sys.exit("not enough training and validation data for one batch")
     print(f"hidden {args.hidden}, input buckets {args.input_buckets}, output buckets {args.output_buckets}, device {device}", flush=True)
 
-    net = Net(args.hidden).to(device)
+    net = Net(args.hidden)
+    initialization = None
+    if args.init_checkpoint:
+        initialization = initialize.restore(net, args.init_checkpoint, args.init_network, args.out, export)
+        initialization.update(status="training", hidden=args.hidden, input_buckets=args.input_buckets,
+                              output_buckets=args.output_buckets, learning_rate=args.lr, seed=args.seed,
+                              device=str(device), train_records=data.n_train, validation_records=data.n_val)
+        with open(args.out + ".init.json", "w") as proof:
+            json.dump(initialization, proof, indent=2)
+            proof.write("\n")
+        print("initialization: checkpoint reproduces supplied NNUE byte for byte", flush=True)
+    net = net.to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=0.0)
     steps_per_epoch = -(-data.n_train // args.batch)
     total = steps_per_epoch * args.epochs
@@ -280,6 +302,7 @@ def main():
         return tot / n
 
     best = validate()
+    best_epoch = 0
     # The initial model is the best checkpoint until an epoch improves on it.
     export(net, args.out)
     torch.save(net.state_dict(), args.out + ".pt")
@@ -310,8 +333,17 @@ def main():
         if kept:
             # Keep the network from the epoch with the lowest held-out loss.
             best = val
+            best_epoch = epoch
             export(net, args.out)
             torch.save(net.state_dict(), args.out + ".pt")
+    if initialization is not None:
+        initialize.verify_sources(initialization)
+        initialization.update(status="complete", epochs_completed=args.epochs, best_epoch=best_epoch,
+                              best_validation_mse=best, output_sha256=initialize.digest(args.out),
+                              checkpoint_sha256=initialize.digest(args.out + ".pt"))
+        with open(args.out + ".init.json", "w") as proof:
+            json.dump(initialization, proof, indent=2)
+            proof.write("\n")
     print(f"saved {args.out} (val {best:.6f})", flush=True)
 
 
