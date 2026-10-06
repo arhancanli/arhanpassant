@@ -247,18 +247,32 @@ def load_nnue_into(net, path):
     if version == 2:
         ib, obk, _flags = struct.unpack("<III", b[12:24])
         off = 24 + 64
-    if hidden != net.hidden or ib != LAYOUT["input_buckets"] or obk != LAYOUT["output_buckets"]:
+    # A wider run starts from k copies of every neuron with output weights / k:
+    # the same function (up to the small symmetry-breaking noise), more capacity.
+    if net.hidden % hidden or ib != LAYOUT["input_buckets"] or obk != LAYOUT["output_buckets"]:
         sys.exit(f"{path}: layout {hidden}/{ib}/{obk} does not match this run")
+    k = net.hidden // hidden
     def take(n, dtype):
         nonlocal off
         a = np.frombuffer(b, dtype=dtype, count=n, offset=off)
         off += a.nbytes
         return torch.from_numpy(a.astype(np.float32))
     with torch.no_grad():
-        net.ft.weight.copy_(take(ib * 768 * hidden, "<i2").reshape(ib * 768, hidden) / QA)
-        net.ft_bias.copy_(take(hidden, "<i2") / QA)
-        net.out.weight.copy_(take(obk * 2 * hidden, "<i2").reshape(obk, 2 * hidden) / QB)
+        ftw = take(ib * 768 * hidden, "<i2").reshape(ib * 768, hidden) / QA
+        ftb = take(hidden, "<i2") / QA
+        ow = take(obk * 2 * hidden, "<i2").reshape(obk, 2, hidden)
+        net.ft.weight.copy_(ftw.repeat(1, k))
+        net.ft_bias.copy_(ftb.repeat(k))
+        # Split each quantised output weight into k integers with the same sum
+        # (copy j gets floor(w/k), plus 1 for the first w mod k copies), so the
+        # widened network exports to exactly the same evaluation.
+        q = torch.div(ow, k, rounding_mode="floor")
+        r = ow - q * k
+        parts = [q + (r > j).float() for j in range(k)]
+        net.out.weight.copy_((torch.cat(parts, dim=2) / QB).reshape(obk, 2 * net.hidden))
         net.out.bias.copy_(take(obk, "<i4") / (QA * QB))
+        if k > 1:
+            net.ft.weight[:, hidden:] += torch.randn_like(net.ft.weight[:, hidden:]) * 1e-4
         if net.factor is not None:
             net.factor.weight.zero_()
     if off != len(b):
