@@ -128,10 +128,12 @@ impl History {
     #[inline(always)]
     pub fn quiet_score(&self, q: &QuietCtx, piece: Piece, m: Move) -> i32 {
         let pawn = if p::pawn_hist() != 0 { self.pawn_hist[q.pawn][piece.idx()][m.to() as usize] as i32 } else { 0 };
-        *self.butterfly_entry(q, m) as i32
-            + pawn
-            + self.cont_score(q.c1, piece, m.to())
-            + self.cont_score(q.c2, piece, m.to())
+        // Component weights in 64ths (64 = the plain sum).
+        (*self.butterfly_entry(q, m) as i32 * p::w_butterfly()
+            + pawn * p::w_pawn()
+            + self.cont_score(q.c1, piece, m.to()) * p::w_cont1()
+            + self.cont_score(q.c2, piece, m.to()) * p::w_cont2())
+            / 64
             + self.cont_score(q.c4, piece, m.to())
     }
 

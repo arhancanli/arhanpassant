@@ -805,7 +805,7 @@ impl Searcher {
             if !root && m == tt_move && excluded.is_null() && depth >= p::se_depth() {
                 if let Some(e) = tt_hit {
                     if e.depth >= depth - 3 && e.bound & BOUND_LOWER != 0 && tt_score.abs() < TB_WIN_IN_MAX {
-                        let s_beta = tt_score - depth;
+                        let s_beta = tt_score - depth * p::se_beta_mult() / 16;
                         let s_depth = (depth - 1) / 2;
                         self.stack[ply].excluded = m;
                         let s = self.search::<false>(pos, s_beta - 1, s_beta, s_depth, ply, cut_node);

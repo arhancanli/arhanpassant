@@ -112,4 +112,9 @@ tunables! {
     cap_fut: 0, 0, 800;           // capture futility base margin at reduced depth < 7 (0 = off)
     see_capt_hist: 0, 0, 512;     // capture SEE pruning threshold loosened by capture history / this (0 = off)
     smp_skip: 0, 0, 1;            // helper threads stagger their iteration depths
+    w_butterfly: 64, 16, 160;     // quiet history weights in 64ths: butterfly,
+    w_pawn: 64, 0, 160;           //   pawn structure,
+    w_cont1: 64, 16, 160;         //   one-ply continuation,
+    w_cont2: 64, 0, 160;          //   two-ply continuation
+    se_beta_mult: 16, 6, 48;      // singular beta = table score - depth * this / 16
 }
