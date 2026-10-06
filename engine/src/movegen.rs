@@ -3,6 +3,7 @@
 use crate::bitboard::*;
 use crate::position::Position;
 use crate::types::*;
+use std::mem::MaybeUninit;
 
 pub const MAX_MOVES: usize = 256;
 
@@ -15,9 +16,11 @@ pub mod kind {
     pub const ALL: u8 = 3;
 }
 
+/// A list of moves. The storage is left uninitialised: search builds one at
+/// nearly every node, and only the first `len` entries are ever read.
 #[derive(Clone)]
 pub struct MoveList {
-    moves: [Move; MAX_MOVES],
+    moves: [MaybeUninit<Move>; MAX_MOVES],
     len: usize,
 }
 
@@ -30,14 +33,38 @@ impl Default for MoveList {
 impl MoveList {
     #[inline(always)]
     pub fn new() -> MoveList {
-        MoveList { moves: [Move::NULL; MAX_MOVES], len: 0 }
+        MoveList { moves: [const { MaybeUninit::uninit() }; MAX_MOVES], len: 0 }
     }
 
     #[inline(always)]
     pub fn push(&mut self, m: Move) {
         debug_assert!(self.len < MAX_MOVES);
-        self.moves[self.len] = m;
+        self.moves[self.len] = MaybeUninit::new(m);
         self.len += 1;
+    }
+
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+
+    /// Overwrite entry `i` (< len).
+    #[inline(always)]
+    pub fn set(&mut self, i: usize, m: Move) {
+        assert!(i < self.len);
+        self.moves[i] = MaybeUninit::new(m);
+    }
+
+    /// Keep only the first `len` entries.
+    #[inline(always)]
+    pub fn truncate(&mut self, len: usize) {
+        self.len = self.len.min(len);
+    }
+
+    #[inline(always)]
+    pub fn swap(&mut self, a: usize, b: usize) {
+        assert!(a < self.len && b < self.len);
+        self.moves.swap(a, b);
     }
 
     #[inline(always)]
@@ -52,7 +79,9 @@ impl MoveList {
 
     #[inline(always)]
     pub fn as_slice(&self) -> &[Move] {
-        &self.moves[..self.len]
+        // SAFETY: entries below `len` were written by `push` or `set`, and
+        // MaybeUninit<Move> has the layout of Move.
+        unsafe { std::slice::from_raw_parts(self.moves.as_ptr().cast::<Move>(), self.len) }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = Move> + '_ {
@@ -248,7 +277,136 @@ impl Position {
     }
 
     /// Is this specific move legal here? (Used to validate hash/killer moves.)
+    /// Decides exactly what [`generate`] would produce, without generating:
+    /// every flag, target and pin/check rule of the generator is mirrored.
     pub fn is_legal(&self, m: Move) -> bool {
+        if m.is_null() {
+            return false;
+        }
+        let us = self.side_to_move();
+        let them = us.flip();
+        let (from, to, fl) = (m.from(), m.to(), m.flags());
+        let p = self.piece_on(from);
+        if p.is_none() || p.color() != us {
+            return false;
+        }
+        let own = self.color_bb(us);
+        let enemy = self.color_bb(them);
+        let occ = own | enemy;
+        let to_bb = bb(to);
+        if own & to_bb != 0 || fl == 6 || fl == 7 {
+            return false;
+        }
+        // Capture flags need an enemy piece on the target (en passant: the ep square); others an empty one.
+        if fl == flag::EP_CAPTURE {
+            if self.ep_square() != Some(to) {
+                return false;
+            }
+        } else if m.is_capture() != (enemy & to_bb != 0) {
+            return false;
+        }
+        let pt = p.piece_type();
+        let ksq = self.king_sq(us);
+        let checkers = self.checkers();
+        if pt == PieceType::King {
+            if m.is_castle() {
+                if checkers != 0 {
+                    return false;
+                }
+                let (k_right, q_right, base) = match us {
+                    Color::White => (castle::WK, castle::WQ, 0u8),
+                    Color::Black => (castle::BK, castle::BQ, 56u8),
+                };
+                if from != base + 4 {
+                    return false;
+                }
+                let rights = self.castling_rights();
+                return if fl == flag::KING_CASTLE {
+                    to == base + 6
+                        && rights & k_right != 0
+                        && occ & (bb(base + 5) | bb(base + 6)) == 0
+                        && !self.is_attacked_by(base + 5, them, occ)
+                        && !self.is_attacked_by(base + 6, them, occ)
+                } else {
+                    to == base + 2
+                        && rights & q_right != 0
+                        && occ & (bb(base + 1) | bb(base + 2) | bb(base + 3)) == 0
+                        && !self.is_attacked_by(base + 3, them, occ)
+                        && !self.is_attacked_by(base + 2, them, occ)
+                };
+            }
+            if fl != flag::QUIET && fl != flag::CAPTURE {
+                return false;
+            }
+            return king_attacks(from) & to_bb != 0 && !self.is_attacked_by(to, them, occ ^ bb(ksq));
+        }
+        if m.is_castle() || more_than_one(checkers) {
+            return false;
+        }
+        if pt != PieceType::Pawn {
+            if fl != flag::QUIET && fl != flag::CAPTURE {
+                return false;
+            }
+            let check_mask = if checkers != 0 { checkers | between(ksq, lsb(checkers)) } else { !0u64 };
+            let pinned = self.pinned() & bb(from) != 0;
+            let att = match pt {
+                PieceType::Knight => {
+                    if pinned {
+                        return false;
+                    }
+                    knight_attacks(from)
+                }
+                PieceType::Bishop => bishop_attacks(from, occ),
+                PieceType::Rook => rook_attacks(from, occ),
+                _ => bishop_attacks(from, occ) | rook_attacks(from, occ),
+            };
+            let pin_line = if pinned { line(ksq, from) } else { !0u64 };
+            return att & check_mask & pin_line & to_bb != 0;
+        }
+        // Pawns.
+        let (up, start_rank, promo_rank): (i8, Bitboard, Bitboard) = match us {
+            Color::White => (8, RANK_2, RANK_8),
+            Color::Black => (-8, RANK_7, RANK_1),
+        };
+        if (to_bb & promo_rank != 0) != m.is_promotion() {
+            return false;
+        }
+        if fl == flag::EP_CAPTURE {
+            // As the generator: no check mask, simulate the capture instead.
+            if pawn_attacks(them, to) & bb(from) == 0 {
+                return false;
+            }
+            let captured_sq = to ^ 8;
+            let occ_after = (occ ^ bb(from) ^ bb(captured_sq)) | to_bb;
+            let their = enemy ^ bb(captured_sq);
+            let rq = (self.type_bb(PieceType::Rook) | self.type_bb(PieceType::Queen)) & their;
+            let bq = (self.type_bb(PieceType::Bishop) | self.type_bb(PieceType::Queen)) & their;
+            let attacked = rook_attacks(ksq, occ_after) & rq != 0
+                || bishop_attacks(ksq, occ_after) & bq != 0
+                || knight_attacks(ksq) & self.pieces(them, PieceType::Knight) != 0
+                || pawn_attacks(us, ksq) & self.pieces(them, PieceType::Pawn) & !bb(captured_sq) != 0;
+            return !attacked;
+        }
+        let check_mask = if checkers != 0 { checkers | between(ksq, lsb(checkers)) } else { !0u64 };
+        let pin_line = if self.pinned() & bb(from) != 0 { line(ksq, from) } else { !0u64 };
+        let allowed = check_mask & pin_line;
+        if m.is_capture() {
+            return pawn_attacks(us, from) & to_bb & allowed != 0;
+        }
+        let one = (from as i8 + up) as Square;
+        if occ & bb(one) != 0 {
+            return false;
+        }
+        if fl == flag::DOUBLE_PUSH {
+            let two = (one as i8 + up) as Square;
+            return bb(from) & start_rank != 0 && to == two && occ & to_bb == 0 && allowed & to_bb != 0;
+        }
+        // Single push (plain, or a promotion on the last rank).
+        to == one && allowed & to_bb != 0
+    }
+
+    /// Reference legality check: generate the move's kind and look it up.
+    pub fn is_legal_by_generation(&self, m: Move) -> bool {
         if m.is_null() {
             return false;
         }

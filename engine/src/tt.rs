@@ -91,6 +91,24 @@ impl TranspositionTable {
         &self.clusters[idx]
     }
 
+    /// Ask the CPU to start loading the cluster for `key` (a later probe or store then hits cache).
+    #[inline(always)]
+    pub fn prefetch(&self, key: u64) {
+        let ptr = self.cluster(key) as *const Cluster;
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: a prefetch hint never faults and touches no architectural state.
+        unsafe {
+            std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) ptr, options(nostack, readonly, preserves_flags));
+        }
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: as above; SSE is part of the x86-64 baseline.
+        unsafe {
+            std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(ptr.cast::<i8>());
+        }
+        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        let _ = ptr;
+    }
+
     pub fn probe(&self, key: u64) -> Option<TtEntry> {
         for s in &self.cluster(key).slots {
             let d = s.data.load(Relaxed);

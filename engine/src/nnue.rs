@@ -47,6 +47,55 @@ fn squared_dot(acc: &[i16], weights: &[i16]) -> i64 {
     }
 }
 
+/// Largest output weight magnitude for which `clamp(x) * w` fits in i16
+/// (255 * 128 = 32,640). Training clips output weights to +-1.98 (+-127 quantised).
+pub const SMALL_WEIGHT: i32 = 128;
+
+/// The same sum for weights within +-SMALL_WEIGHT: the activation-weight product
+/// stays in i16 and the square accumulates in i32 lanes, widened every 128
+/// chunks (128 * 255 * 128 * 255 < 2^31), so the result is exact.
+#[inline]
+fn squared_dot_small(acc: &[i16], weights: &[i16]) -> i64 {
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        // SAFETY: as squared_dot; the caller guarantees the weight bound.
+        unsafe { squared_dot_small_neon(acc, weights) }
+    }
+    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    {
+        squared_dot_scalar(acc, weights)
+    }
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+#[target_feature(enable = "neon")]
+unsafe fn squared_dot_small_neon(acc: &[i16], weights: &[i16]) -> i64 {
+    use std::arch::aarch64::*;
+    let n = acc.len().min(weights.len());
+    let (values, tail) = acc[..n].as_chunks::<16>();
+    let (weights, weight_tail) = weights[..n].as_chunks::<16>();
+    let zero = vdupq_n_s16(0);
+    let cap = vdupq_n_s16(QA as i16);
+    let mut total = 0i64;
+    // Four independent i32 accumulators; each lane takes one product per
+    // 16-element chunk, so 128 chunks per block keep every lane exact.
+    for (vb, wb) in values.chunks(128).zip(weights.chunks(128)) {
+        let (mut s0, mut s1, mut s2, mut s3) = (vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0), vdupq_n_s32(0));
+        for (a, w) in vb.iter().zip(wb) {
+            let c0 = vminq_s16(vmaxq_s16(vld1q_s16(a.as_ptr()), zero), cap);
+            let c1 = vminq_s16(vmaxq_s16(vld1q_s16(a.as_ptr().add(8)), zero), cap);
+            let p0 = vmulq_s16(c0, vld1q_s16(w.as_ptr()));
+            let p1 = vmulq_s16(c1, vld1q_s16(w.as_ptr().add(8)));
+            s0 = vmlal_s16(s0, vget_low_s16(p0), vget_low_s16(c0));
+            s1 = vmlal_high_s16(s1, p0, c0);
+            s2 = vmlal_s16(s2, vget_low_s16(p1), vget_low_s16(c1));
+            s3 = vmlal_high_s16(s3, p1, c1);
+        }
+        total += vaddlvq_s32(s0) + vaddlvq_s32(s1) + vaddlvq_s32(s2) + vaddlvq_s32(s3);
+    }
+    total + squared_dot_scalar(tail, weight_tail)
+}
+
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
 #[target_feature(enable = "neon")]
 unsafe fn squared_dot_neon(acc: &[i16], weights: &[i16]) -> i64 {
@@ -82,6 +131,8 @@ pub struct Network {
     pub ft_bias: Vec<i16>,
     pub out_weights: Vec<i16>,
     pub out_bias: Vec<i32>,
+    /// Every output weight is within +-SMALL_WEIGHT: the faster exact kernel applies.
+    pub small_output: bool,
 }
 
 struct Reader<'a> {
@@ -141,7 +192,8 @@ impl Network {
         if r.off != b.len() {
             return Err(format!("network size {} does not match its header ({} expected)", b.len(), r.off));
         }
-        Ok(Network { hidden, input_buckets, output_buckets, mirror, bucket_map, ft_weights, ft_bias, out_weights, out_bias })
+        let small_output = out_weights.iter().all(|&w| i32::from(w).abs() <= SMALL_WEIGHT);
+        Ok(Network { hidden, input_buckets, output_buckets, mirror, bucket_map, ft_weights, ft_bias, out_weights, out_bias, small_output })
     }
 
     pub fn load(path: &str) -> Result<Network, String> {
@@ -220,7 +272,13 @@ impl Network {
         let w = &self.out_weights[bucket * 2 * h..(bucket + 1) * 2 * h];
         let mut sum: i64 = 0;
         for (half, w) in [(us, &w[..h]), (them, &w[h..])] {
-            sum += if SCALAR { squared_dot_scalar(half, w) } else { squared_dot(half, w) };
+            sum += if SCALAR {
+                squared_dot_scalar(half, w)
+            } else if self.small_output {
+                squared_dot_small(half, w)
+            } else {
+                squared_dot(half, w)
+            };
         }
         let out = (sum / QA as i64 + self.out_bias[bucket] as i64) * SCALE as i64 / (QA as i64 * QB as i64);
         out as i32
@@ -460,6 +518,7 @@ mod tests {
             ft_bias: (0..hidden).map(|_| r()).collect(),
             out_weights: (0..ob * 2 * hidden).map(|_| r()).collect(),
             out_bias: (0..ob).map(|i| 17 + i as i32).collect(),
+            small_output: true,
         }
     }
 
@@ -634,5 +693,26 @@ mod tests {
         let values = [255; 8];
         let weights = [i16::MAX; 8];
         assert!(squared_dot(&values, &weights) > i64::from(i32::MAX));
+    }
+
+    #[test]
+    fn small_weight_kernel_is_exact_up_to_the_largest_networks() {
+        let mut seed = 0x9E37_79B9u64;
+        for n in [0, 1, 7, 8, 15, 16, 17, 31, 32, 512, 1024, 2048, 2056, 4096, 8192] {
+            let mut values = vec![0i16; n + 1];
+            let mut weights = values.clone();
+            for i in 0..n + 1 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                values[i] = (seed >> 32) as i16;
+                weights[i] = ((seed >> 48) as i16 as i32 % (SMALL_WEIGHT + 1)) as i16;
+            }
+            assert_eq!(squared_dot_small(&values[1..], &weights[1..]), squared_dot_scalar(&values[1..], &weights[1..]), "n {n}");
+            // Extremes: every activation saturated, every weight at the bound, both signs.
+            for w in [-SMALL_WEIGHT as i16, SMALL_WEIGHT as i16] {
+                values.fill(i16::MAX);
+                weights.fill(w);
+                assert_eq!(squared_dot_small(&values[1..], &weights[1..]), 255 * 255 * i64::from(w) * n as i64, "n {n} w {w}");
+            }
+        }
     }
 }

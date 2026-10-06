@@ -2,10 +2,11 @@
 //! killers and counter-move first), then losing captures.
 
 use crate::history::{ContKey, History};
-use crate::movegen::{generate, kind, MAX_MOVES};
+use crate::movegen::{generate, kind, MoveList, MAX_MOVES};
 use crate::position::Position;
 use crate::see::{see_ge, see_value};
 use crate::types::*;
+use std::mem::MaybeUninit;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Stage {
@@ -27,12 +28,12 @@ pub struct MovePicker {
     c2: ContKey,
     /// 4-ply continuation key (`ContKey::NONE` when the `cont4` setting is off).
     pub c4: ContKey,
-    moves: [Move; MAX_MOVES],
-    scores: [i32; MAX_MOVES],
+    /// Moves of the current stage; scores[i] belongs to moves[i] (uninitialised past len).
+    moves: MoveList,
+    scores: [MaybeUninit<i32>; MAX_MOVES],
     len: usize,
     idx: usize,
-    bad: [Move; MAX_MOVES],
-    bad_len: usize,
+    bad: MoveList,
     bad_idx: usize,
     skip_quiets: bool,
     /// Quiescence: only noisy moves (unless in check), no good/bad split.
@@ -50,12 +51,11 @@ impl MovePicker {
             c1,
             c2,
             c4: ContKey::NONE,
-            moves: [Move::NULL; MAX_MOVES],
-            scores: [0; MAX_MOVES],
+            moves: MoveList::new(),
+            scores: [const { MaybeUninit::uninit() }; MAX_MOVES],
             len: 0,
             idx: 0,
-            bad: [Move::NULL; MAX_MOVES],
-            bad_len: 0,
+            bad: MoveList::new(),
             bad_idx: 0,
             skip_quiets: false,
             qsearch: false,
@@ -76,21 +76,53 @@ impl MovePicker {
         self.skip_quiets = true;
     }
 
+    #[inline(always)]
+    fn score(&self, i: usize) -> i32 {
+        debug_assert!(i < self.len);
+        // SAFETY: every index below len was scored when the stage was generated.
+        unsafe { self.scores[i].assume_init() }
+    }
+
     fn pick_best(&mut self) -> Option<(Move, i32)> {
         if self.idx >= self.len {
             return None;
         }
         let mut best = self.idx;
+        let mut best_score = self.score(best);
         for i in self.idx + 1..self.len {
-            if self.scores[i] > self.scores[best] {
+            let sc = self.score(i);
+            if sc > best_score {
                 best = i;
+                best_score = sc;
             }
         }
         self.moves.swap(self.idx, best);
         self.scores.swap(self.idx, best);
-        let r = (self.moves[self.idx], self.scores[self.idx]);
+        let r = (self.moves[self.idx], best_score);
         self.idx += 1;
         Some(r)
+    }
+
+    /// Generate one stage's moves into `moves`, dropping the table move, and
+    /// score them in generation order.
+    #[inline(always)]
+    fn fill(&mut self, pos: &Position, kind_mask: u8, mut score: impl FnMut(Move) -> i32) {
+        self.moves.clear();
+        generate(pos, kind_mask, &mut self.moves);
+        let n = self.moves.len();
+        let mut j = 0;
+        for i in 0..n {
+            let m = self.moves[i];
+            if m == self.tt_move {
+                continue;
+            }
+            self.moves.set(j, m);
+            self.scores[j] = MaybeUninit::new(score(m));
+            j += 1;
+        }
+        self.moves.truncate(j);
+        self.len = j;
+        self.idx = 0;
     }
 
     pub fn next(&mut self, pos: &Position, hist: &History) -> Option<Move> {
@@ -101,24 +133,14 @@ impl MovePicker {
                     return Some(self.tt_move);
                 }
                 Stage::GenNoisy => {
-                    let mut list = crate::movegen::MoveList::new();
-                    generate(pos, kind::NOISY, &mut list);
-                    self.len = 0;
-                    self.idx = 0;
-                    for m in list.iter() {
-                        if m == self.tt_move {
-                            continue;
-                        }
+                    self.fill(pos, kind::NOISY, |m| {
                         let victim = pos.captured(m).unwrap_or(PieceType::Pawn);
-                        let mut score = 16 * see_value(victim)
-                            + hist.capture_score(pos.moved_piece(m), m.to(), victim);
+                        let mut score = 16 * see_value(victim) + hist.capture_score(pos.moved_piece(m), m.to(), victim);
                         if m.promotion() == Some(PieceType::Queen) {
                             score += 16 * see_value(PieceType::Queen);
                         }
-                        self.moves[self.len] = m;
-                        self.scores[self.len] = score;
-                        self.len += 1;
-                    }
+                        score
+                    });
                     self.stage = Stage::GoodNoisy;
                 }
                 Stage::GoodNoisy => {
@@ -126,8 +148,7 @@ impl MovePicker {
                         if self.qsearch || see_ge(pos, m, -score / 64) {
                             return Some(m);
                         }
-                        self.bad[self.bad_len] = m;
-                        self.bad_len += 1;
+                        self.bad.push(m);
                     }
                     self.stage = Stage::GenQuiet;
                 }
@@ -136,28 +157,20 @@ impl MovePicker {
                         self.stage = Stage::BadNoisy;
                         continue;
                     }
-                    let mut list = crate::movegen::MoveList::new();
-                    generate(pos, kind::QUIET, &mut list);
-                    self.len = 0;
-                    self.idx = 0;
                     let stm = pos.side_to_move();
-                    for m in list.iter() {
-                        if m == self.tt_move {
-                            continue;
-                        }
+                    let (c1, c2, c4, killers, counter) = (self.c1, self.c2, self.c4, self.killers, self.counter);
+                    self.fill(pos, kind::QUIET, |m| {
                         let piece = pos.moved_piece(m);
-                        let mut score = hist.quiet_score(stm, piece, m, self.c1, self.c2, self.c4);
-                        if m == self.killers[0] {
+                        let mut score = hist.quiet_score(stm, piece, m, c1, c2, c4);
+                        if m == killers[0] {
                             score += 1 << 22;
-                        } else if m == self.killers[1] {
+                        } else if m == killers[1] {
                             score += 1 << 21;
-                        } else if m == self.counter {
+                        } else if m == counter {
                             score += 1 << 20;
                         }
-                        self.moves[self.len] = m;
-                        self.scores[self.len] = score;
-                        self.len += 1;
-                    }
+                        score
+                    });
                     self.stage = Stage::Quiet;
                 }
                 Stage::Quiet => {
@@ -169,7 +182,7 @@ impl MovePicker {
                     self.stage = Stage::BadNoisy;
                 }
                 Stage::BadNoisy => {
-                    if self.bad_idx < self.bad_len {
+                    if self.bad_idx < self.bad.len() {
                         self.bad_idx += 1;
                         return Some(self.bad[self.bad_idx - 1]);
                     }

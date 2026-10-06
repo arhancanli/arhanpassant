@@ -261,6 +261,7 @@ impl Searcher {
 
     #[inline(always)]
     fn push_move(&mut self, parent: &Position, m: Move, child: &Position, ply: usize) {
+        self.shared.tt.prefetch(child.hash());
         self.hashes.push(child.hash());
         if let Some(acc) = &mut self.acc {
             acc.push(parent, m, child, ply + 1);
