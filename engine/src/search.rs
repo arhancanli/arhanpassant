@@ -386,6 +386,41 @@ impl Searcher {
         }
     }
 
+    /// Can the side to move play a reversible move back to a position seen
+    /// earlier inside this search (a repetition it could force)?
+    fn upcoming_repetition(&self, pos: &Position, ply: usize) -> bool {
+        let n = self.hashes.len();
+        let mut end = (pos.halfmove_clock() as usize).min(n - 1);
+        // A null move breaks the chain: positions before it do not count.
+        for j in 1..=end.min(ply) {
+            if self.stack[ply - j].current.is_null() {
+                end = j - 1;
+                break;
+            }
+        }
+        if end < 3 {
+            return false;
+        }
+        let k = |j: usize| self.hashes[n - 1 - j];
+        let table = crate::cuckoo::table();
+        let occ = pos.occupied();
+        // The opponent's moves since then must cancel out (same pieces, same squares).
+        let mut other = k(0) ^ k(1) ^ crate::bitboard::ZOBRIST_SIDE;
+        let mut i = 3;
+        while i <= end {
+            other ^= k(i - 1) ^ k(i) ^ crate::bitboard::ZOBRIST_SIDE;
+            if other == 0 && ply > i {
+                if let Some(m) = table.lookup(k(0) ^ k(i)) {
+                    if crate::bitboard::between(m.from(), m.to()) & occ == 0 {
+                        return true;
+                    }
+                }
+            }
+            i += 2;
+        }
+        false
+    }
+
     fn is_draw(&self, pos: &Position, ply: usize) -> bool {
         if pos.halfmove_clock() >= 100 && (!pos.in_check() || !pos.legal_moves().is_empty()) {
             return true;
@@ -466,6 +501,13 @@ impl Searcher {
             beta = beta.min(MATE - ply as i32 - 1);
             if alpha >= beta {
                 return alpha;
+            }
+            // We can force a repetition: the score is at least a draw.
+            if p::upcoming_rep() != 0 && alpha < DRAW && self.upcoming_repetition(pos, ply) {
+                alpha = self.draw_score();
+                if alpha >= beta {
+                    return alpha;
+                }
             }
         }
 
@@ -993,6 +1035,12 @@ impl Searcher {
         }
         if pos.is_insufficient_material() || (ply > 0 && self.is_repetition(pos, ply)) {
             return self.draw_score();
+        }
+        if p::upcoming_rep() != 0 && ply > 0 && alpha < DRAW && self.upcoming_repetition(pos, ply) {
+            alpha = self.draw_score();
+            if alpha >= beta {
+                return alpha;
+            }
         }
         let in_check = pos.in_check();
         if ply >= MAX_PLY - 1 {

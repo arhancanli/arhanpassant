@@ -106,4 +106,5 @@ tunables! {
     hindsight: 0, 0, 600;         // reduced node: +1 ply if the opponent's position did not worsen, -1 if both evals sum above this (0 = off)
     lmr_corr: 0, 0, 1000;         // reduce less by |eval correction| / this (0 = off)
     lmr_pv: 0, 0, 1;              // reduce late moves from the second move at PV nodes too (not the root)
+    upcoming_rep: 0, 0, 1;        // a side that can force a repetition scores at least a draw (cuckoo tables)
 }

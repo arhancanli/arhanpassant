@@ -15,6 +15,7 @@
 
 pub mod bench;
 pub mod bitboard;
+pub mod cuckoo;
 pub mod datagen;
 pub mod eval;
 pub mod game;
