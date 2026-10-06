@@ -93,9 +93,9 @@ for spec in "${FLEET[@]}"; do
   cfg=()
   [ "$ocpus" != "-" ] && cfg=(--shape-config "{\"ocpus\":$ocpus,\"memoryInGBs\":$mem}")
   id=$($O compute instance launch --compartment-id "$T" --availability-domain "$AD" --display-name "ap-$name" \
-        --shape "$shape" "${cfg[@]}" --image-id "$img" --subnet-id "$SUBNET" --assign-public-ip true \
+        --shape "$shape" ${cfg[@]+"${cfg[@]}"} --image-id "$img" --subnet-id "$SUBNET" --assign-public-ip true \
         --ssh-authorized-keys-file ~/.ssh/arhanpassant_oci.pub --user-data-file "$INIT" \
-        --boot-volume-size-in-gbs 100 --query data.id --raw-output 2> $ST/launch-$name.err)
+        --boot-volume-size-in-gbs ${BOOT_GB:-100} --query data.id --raw-output 2> $ST/launch-$name.err)
   if [ -n "$id" ]; then
     save "vm_$name" "$id"; echo "requested ap-$name ($shape ${ocpus/-/fixed})"
   else

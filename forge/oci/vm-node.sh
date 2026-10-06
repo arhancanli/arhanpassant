@@ -12,7 +12,7 @@ cd ~
 if [ ! -d src ]; then git clone --depth 50 -b "$BRANCH" https://github.com/arhancanli/arhanpassant.git src; fi
 cd src && git fetch --depth 50 origin "$BRANCH" && git checkout -q -B run "origin/$BRANCH"
 REV=$(git rev-parse --short HEAD)
-cargo build --release -p arhanpassant -p arena >> ~/build.log 2>&1 || { log "build failed at $REV"; sleep 600; exit 1; }
+cargo build --release -p arhanpassant -p arhanpassant-arena >> ~/build.log 2>&1 || { log "build failed at $REV"; sleep 600; exit 1; }
 cp target/release/arhanpassant ~/ap-$REV && cp target/release/arena ~/arena 2>/dev/null
 log "built $REV"
 mkdir -p ~/data
