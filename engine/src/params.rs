@@ -78,19 +78,19 @@ tunables! {
     probcut_margin: 0, 0, 400;
     mopup: 1, 0, 1;               // drive a bare king to the edge (see eval::mop_up); passed as not worse, converts KBNK
     corr_np: 128, 0, 256;         // eval correction by each side's pieces other than pawns (+7.9 Elo)
-    corr_cont: 0, 0, 256;         // eval correction by the previous move
+    corr_cont: 128, 0, 256;         // eval correction by the previous move
     hist_prune: 0, 0, 8000;       // skip quiet moves whose history is below -this x (reduced depth + 1)
     tt_hist: 0, 0, 1;             // a table cutoff by a quiet move rewards that move's history
     prior_bonus: 1, 0, 1;         // a node that fails low rewards the opponent's quiet move that led to it (+5.2 Elo)
     eval_hist: 0, 0, 40;          // history of the opponent's quiet move learns from how the eval changed after it
     lmr_ttcap: 0, 0, 1;           // reduce quiet moves one more ply when the table's move is a capture
     cont4: 0, 0, 1;               // continuation history also keyed by our own move two turns ago
-    corr_joint: 0, 0, 1;          // correction tables learn jointly (each toward what the others leave), not each the whole error
+    corr_joint: 1, 0, 1;          // correction tables learn jointly (each toward what the others leave), not each the whole error
     smp_vote: 0, 0, 1;            // experimental: choose a move using completed searches from every worker
-    threat_hist: 0, 0, 1;         // quiet history learns separately when a move leaves or enters an attacked square
-    pawn_hist: 0, 0, 1;           // quiet history per pawn structure
-    threat_order: 0, 0, 300;      // order quiets that rescue a piece attacked by a cheaper one first (% of base values)
-    check_order: 0, 0, 65536;     // ordering bonus for a quiet move that gives check and does not lose material
+    threat_hist: 1, 0, 1;         // quiet history learns separately when a move leaves or enters an attacked square
+    pawn_hist: 1, 0, 1;           // quiet history per pawn structure
+    threat_order: 100, 0, 300;      // order quiets that rescue a piece attacked by a cheaper one first (% of base values)
+    check_order: 16384, 0, 65536;     // ordering bonus for a quiet move that gives check and does not lose material
     fh_blend: 0, 0, 1;            // blend a fail-high score toward beta by depth
     lmr_cutoff: 0, 0, 1;          // reduce one more ply when the children keep failing high (cutoff count > 2)
     lmr_capt: 0, 0, 32768;        // captures: reduce by capture history / this (0 = off)
