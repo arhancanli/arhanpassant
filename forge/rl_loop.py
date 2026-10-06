@@ -124,7 +124,7 @@ def start_mac_datagen(binary, rnd):
     seed = int(time.time())
     base = f"cd {DATA} && nohup nice -n 19 {binary} datagen --nodes 8000 --positions-per-file 1000000"
     sh(f"{base} --threads {MAC_THREADS} --seed {seed} --out {dirs[0]} > {RL}/datagen-r{rnd}.log 2>&1 &")
-    sh(f"{base} --threads {MAC_SEEDED} --seed {seed + 17} --book {DATA}/active/seeds-milestones.epd "
+    sh(f"{base} --threads {MAC_SEEDED} --seed {seed + 17} --book {DATA}/active/seeds.epd "
        f"--random-plies 2 --out {dirs[1]} > {RL}/datagen-r{rnd}-active.log 2>&1 &")
     return dirs
 
