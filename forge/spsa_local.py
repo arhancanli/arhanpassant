@@ -89,7 +89,7 @@ def run(args):
     while state["pairs_done"] < total:
         # Lowest priority: wait while test jobs are queued or a test match is running.
         while args.yield_queue and (glob.glob(os.path.join(args.yield_queue, "*.sh")) or subprocess.run(
-                ["pgrep", "-f", "[b]in/arena .*arhanpassant-data/elo/"], capture_output=True).returncode == 0):
+                ["pgrep", "-f", "^" + args.arena + " .*/elo/"], capture_output=True).returncode == 0):
             time.sleep(30)
         k = state["pairs_done"] + 1
         n = min(args.batch, total - state["pairs_done"])
