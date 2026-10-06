@@ -103,4 +103,7 @@ tunables! {
     corr_minor: 0, 0, 256;        // eval correction by the knights and bishops of both sides (0 = off)
     draw_jitter: 0, 0, 1;         // search draws score -1 or +1 by node count
     mvv_mult: 16, 4, 40;          // capture ordering: weight of the captured piece's value against capture history
+    hindsight: 0, 0, 600;         // reduced node: +1 ply if the opponent's position did not worsen, -1 if both evals sum above this (0 = off)
+    lmr_corr: 0, 0, 1000;         // reduce less by |eval correction| / this (0 = off)
+    lmr_pv: 0, 0, 1;              // reduce late moves from the second move at PV nodes too (not the root)
 }

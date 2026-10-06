@@ -88,6 +88,8 @@ struct StackEntry {
     qctx: QuietCtx,
     /// Beta cutoffs found by nodes at this ply since the grandparent started.
     cutoff_cnt: u32,
+    /// Reduction this node applied to the child it is searching (0 outside reduced searches).
+    reduction: i32,
 }
 
 pub struct SearchResult {
@@ -568,6 +570,23 @@ impl Searcher {
         };
         self.stack[ply + 1].killers = [Move::NULL; 2];
 
+        // Hindsight: the parent reduced this node; if the position turned out
+        // better for us than the opponent's evaluation suggested, give back a
+        // ply; if both sides like it, search it a ply shallower.
+        if p::hindsight() != 0 && !in_check && excluded.is_null() && ply >= 1 {
+            let prior_r = self.stack[ply - 1].reduction;
+            let prev_eval = self.stack[ply - 1].static_eval;
+            if prev_eval != -INF {
+                let opp_worsening = static_eval > -prev_eval;
+                if prior_r >= 3 && !opp_worsening {
+                    depth += 1;
+                }
+                if prior_r >= 2 && depth >= 2 && static_eval + prev_eval > p::hindsight() {
+                    depth -= 1;
+                }
+            }
+        }
+
         let us = pos.side_to_move();
         if !PV && !in_check && excluded.is_null() {
             // Razoring: far below alpha at low depth, only captures can save it.
@@ -753,7 +772,8 @@ impl Searcher {
                 -self.search::<PV>(&child, -beta, -alpha, new_depth, ply + 1, false)
             } else {
                 let mut r = 0;
-                if depth >= 3 && moves_searched > 2 * PV as usize {
+                let first_reduced = if p::lmr_pv() != 0 { root as usize } else { 2 * PV as usize };
+                if depth >= 3 && moves_searched > first_reduced {
                     r = lmr_base;
                     if is_quiet {
                         r -= hist / p::lmr_hist_div();
@@ -766,6 +786,10 @@ impl Searcher {
                     }
                     if p::lmr_cutoff() != 0 && self.stack[ply + 1].cutoff_cnt > 2 {
                         r += 1;
+                    }
+                    // A large eval correction marks an uncertain position: reduce less.
+                    if p::lmr_corr() != 0 && !in_check {
+                        r -= (static_eval - raw_eval).abs() / p::lmr_corr();
                     }
                     if !tt_pv {
                         r += 1;
@@ -788,7 +812,9 @@ impl Searcher {
                     r = r.clamp(0, (new_depth - 1).max(0));
                 }
                 let reduced = new_depth - r;
+                self.stack[ply].reduction = r;
                 let mut s = -self.search::<false>(&child, -alpha - 1, -alpha, reduced, ply + 1, true);
+                self.stack[ply].reduction = 0;
                 if s > alpha && r > 0 {
                     if p::lmr_deeper() != 0 {
                         new_depth += (s > best_score + 40 + 2 * new_depth) as i32 - (s < best_score + new_depth) as i32;
