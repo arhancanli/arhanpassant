@@ -114,6 +114,10 @@ impl History {
 
     #[inline(always)]
     pub fn cont_score(&self, key: ContKey, piece: Piece, to: Square) -> i32 {
+        // The "no previous move" row is never updated: skip the memory access.
+        if key.piece == 12 {
+            return 0;
+        }
         self.cont[key.piece as usize][key.to as usize][piece.idx()][to as usize] as i32
     }
 
