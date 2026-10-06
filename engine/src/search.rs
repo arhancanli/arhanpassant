@@ -166,6 +166,8 @@ pub struct Searcher {
     pub root_allowed: Vec<Move>,
     /// Positions answered by the tablebases in this search.
     pub tb_hits: u64,
+    /// Final score of this searcher's previous search (time management).
+    prev_score: Option<i32>,
 }
 
 impl Searcher {
@@ -196,11 +198,13 @@ impl Searcher {
             verbose: true,
             root_allowed: Vec::new(),
             tb_hits: 0,
+            prev_score: None,
         }
     }
 
     pub fn clear(&mut self) {
         self.history.clear();
+        self.prev_score = None;
     }
 
     fn init_lmr(&mut self) {
@@ -1097,6 +1101,7 @@ impl Searcher {
         }
         let soft_limit = if main_thread { self.set_time_limits(root.side_to_move(), limits, move_overhead) } else { None };
         let mut stability = 0usize;
+        let mut iter_scores: Vec<i32> = Vec::with_capacity(MAX_PLY);
 
         let legal = root.legal_moves();
         let mut result = SearchResult { best_move: Move::NULL, score: 0, depth: 0, nodes: 0, pv: Vec::new() };
@@ -1155,6 +1160,7 @@ impl Searcher {
             result.score = score;
             result.depth = depth;
             result.pv = self.pv[0][..self.pv_len[0]].to_vec();
+            iter_scores.push(score);
             if main_thread && self.verbose {
                 let total = self.shared.nodes.load(Ordering::Relaxed) + (self.nodes - self.flushed_nodes);
                 report(&SearchInfo {
@@ -1187,6 +1193,14 @@ impl Searcher {
                         limit *= (p::tm_node_base() as f64 / 100.0 - frac) * p::tm_node_mult() as f64 / 100.0;
                         limit *= STABILITY[stability.min(4)];
                     }
+                    if scalable && p::tm_falling() != 0 && score.abs() < TB_WIN_IN_MAX {
+                        // More time while the evaluation falls (against the previous move's
+                        // search and three iterations ago), less while it rises.
+                        let reference = self.prev_score.filter(|s| s.abs() < TB_WIN_IN_MAX).unwrap_or(score);
+                        let older = iter_scores[iter_scores.len().saturating_sub(4)];
+                        let drop = 2 * (reference - score) + (older - score);
+                        limit *= (1.0 + drop as f64 / p::tm_falling() as f64).clamp(0.75, 1.6);
+                    }
                     if self.time_start.elapsed().as_secs_f64() * 1000.0 >= limit {
                         break;
                     }
@@ -1198,6 +1212,9 @@ impl Searcher {
         }
         if main_thread {
             self.shared.stop.store(true, Ordering::Relaxed);
+        }
+        if result.depth > 0 {
+            self.prev_score = Some(result.score);
         }
         self.shared.nodes.fetch_add(self.nodes - self.flushed_nodes, Ordering::Relaxed);
         self.flushed_nodes = self.nodes;

@@ -95,4 +95,5 @@ tunables! {
     se_neg: 0, 0, 1;              // stronger negative singular extensions (-2 for table score >= beta, -2 at cut nodes)
     fut_hist: 0, 0, 32768;        // futility/LMP/SEE pruning depth also counts quiet history / this (0 = off)
     improving_v2: 0, 0, 1;        // "improving" falls back to four plies back when two plies back was in check
+    tm_falling: 0, 0, 4000;       // time: scale the soft limit by how far the score fell / this (0 = off)
 }
