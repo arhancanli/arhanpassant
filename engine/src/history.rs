@@ -1,8 +1,37 @@
 //! Move-ordering statistics learned during search.
 
+use crate::params as p;
 use crate::types::*;
 
 pub const HIST_MAX: i32 = 16384;
+
+/// Pawn-structure history entries (indexed by a hash of both sides' pawns).
+pub const PAWN_HIST_SIZE: usize = 512;
+
+/// What every quiet-move history lookup at one node shares.
+#[derive(Copy, Clone, Debug)]
+pub struct QuietCtx {
+    pub stm: Color,
+    /// Squares the opponent attacks (zero when `threat_hist` is off).
+    pub threats: Bitboard,
+    /// Pawn-structure index (used when `pawn_hist` is on).
+    pub pawn: usize,
+    pub c1: ContKey,
+    pub c2: ContKey,
+    pub c4: ContKey,
+}
+
+impl QuietCtx {
+    pub const fn new(stm: Color, c1: ContKey, c2: ContKey) -> QuietCtx {
+        QuietCtx { stm, threats: 0, pawn: 0, c1, c2, c4: ContKey::NONE }
+    }
+}
+
+impl Default for QuietCtx {
+    fn default() -> Self {
+        QuietCtx::new(Color::White, ContKey::NONE, ContKey::NONE)
+    }
+}
 
 /// Correction history: per side to move and pawn structure, a running average
 /// of how far search results landed from the static evaluation (cp x GRAIN).
@@ -22,8 +51,11 @@ impl ContKey {
 }
 
 pub struct History {
-    /// [colour][from][to]
-    pub butterfly: [[[i16; 64]; 64]; 2],
+    /// [colour][from attacked][to attacked][from][to]: the same move learns
+    /// separately when it leaves or enters a square the opponent attacks.
+    pub butterfly: [[[[[i16; 64]; 64]; 2]; 2]; 2],
+    /// [pawn structure][piece][to]
+    pub pawn_hist: Vec<[[i16; 64]; 12]>,
     /// [prev piece][prev to][piece][to]
     pub cont: Vec<[[[i16; 64]; 12]; 64]>,
     /// [piece][to][captured type]
@@ -48,7 +80,8 @@ fn gravity(entry: &mut i16, bonus: i32) {
 impl History {
     pub fn new() -> Box<History> {
         Box::new(History {
-            butterfly: [[[0; 64]; 64]; 2],
+            butterfly: [[[[[0; 64]; 64]; 2]; 2]; 2],
+            pawn_hist: vec![[[0; 64]; 12]; PAWN_HIST_SIZE],
             cont: vec![[[[0; 64]; 12]; 64]; 13],
             capture: [[[0; 6]; 64]; 12],
             counter: [[Move::NULL; 64]; 13],
@@ -59,7 +92,10 @@ impl History {
     }
 
     pub fn clear(&mut self) {
-        self.butterfly = [[[0; 64]; 64]; 2];
+        self.butterfly = [[[[[0; 64]; 64]; 2]; 2]; 2];
+        for e in self.pawn_hist.iter_mut() {
+            *e = [[0; 64]; 12];
+        }
         for c in self.cont.iter_mut() {
             *c = [[[0; 64]; 12]; 64];
         }
@@ -78,20 +114,31 @@ impl History {
         self.cont[key.piece as usize][key.to as usize][piece.idx()][to as usize] as i32
     }
 
-    /// Combined quiet-move score: butterfly + 1-, 2- and 4-ply continuation
-    /// (`c4` is `ContKey::NONE` unless the `cont4` setting is on; that row stays zero).
     #[inline(always)]
-    pub fn quiet_score(&self, stm: Color, piece: Piece, m: Move, c1: ContKey, c2: ContKey, c4: ContKey) -> i32 {
-        self.butterfly[stm.idx()][m.from() as usize][m.to() as usize] as i32
-            + self.cont_score(c1, piece, m.to())
-            + self.cont_score(c2, piece, m.to())
-            + self.cont_score(c4, piece, m.to())
+    fn butterfly_entry(&self, q: &QuietCtx, m: Move) -> &i16 {
+        let (ft, tt) = (((q.threats >> m.from()) & 1) as usize, ((q.threats >> m.to()) & 1) as usize);
+        &self.butterfly[q.stm.idx()][ft][tt][m.from() as usize][m.to() as usize]
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn update_quiet(&mut self, stm: Color, piece: Piece, m: Move, c1: ContKey, c2: ContKey, c4: ContKey, bonus: i32) {
-        gravity(&mut self.butterfly[stm.idx()][m.from() as usize][m.to() as usize], bonus);
-        for c in [c1, c2, c4] {
+    /// Combined quiet-move score: butterfly + pawn structure + 1-, 2- and 4-ply
+    /// continuation (`c4` is `ContKey::NONE` unless the `cont4` setting is on; that row stays zero).
+    #[inline(always)]
+    pub fn quiet_score(&self, q: &QuietCtx, piece: Piece, m: Move) -> i32 {
+        let pawn = if p::pawn_hist() != 0 { self.pawn_hist[q.pawn][piece.idx()][m.to() as usize] as i32 } else { 0 };
+        *self.butterfly_entry(q, m) as i32
+            + pawn
+            + self.cont_score(q.c1, piece, m.to())
+            + self.cont_score(q.c2, piece, m.to())
+            + self.cont_score(q.c4, piece, m.to())
+    }
+
+    pub fn update_quiet(&mut self, q: &QuietCtx, piece: Piece, m: Move, bonus: i32) {
+        let (ft, tt) = (((q.threats >> m.from()) & 1) as usize, ((q.threats >> m.to()) & 1) as usize);
+        gravity(&mut self.butterfly[q.stm.idx()][ft][tt][m.from() as usize][m.to() as usize], bonus);
+        if p::pawn_hist() != 0 {
+            gravity(&mut self.pawn_hist[q.pawn][piece.idx()][m.to() as usize], bonus);
+        }
+        for c in [q.c1, q.c2, q.c4] {
             if c.piece != 12 {
                 gravity(&mut self.cont[c.piece as usize][c.to as usize][piece.idx()][m.to() as usize], bonus);
             }
@@ -104,8 +151,9 @@ impl History {
     }
 
     /// Butterfly history only, for the opponent's previous move.
-    pub fn update_butterfly(&mut self, stm: Color, m: Move, bonus: i32) {
-        gravity(&mut self.butterfly[stm.idx()][m.from() as usize][m.to() as usize], bonus);
+    pub fn update_butterfly(&mut self, q: &QuietCtx, m: Move, bonus: i32) {
+        let (ft, tt) = (((q.threats >> m.from()) & 1) as usize, ((q.threats >> m.to()) & 1) as usize);
+        gravity(&mut self.butterfly[q.stm.idx()][ft][tt][m.from() as usize][m.to() as usize], bonus);
     }
 
     pub fn update_capture(&mut self, piece: Piece, to: Square, victim: PieceType, bonus: i32) {

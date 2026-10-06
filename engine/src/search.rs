@@ -3,8 +3,8 @@
 //! and reduction heuristics. Several threads share one table (lazy SMP).
 
 use crate::eval;
-use crate::history::{corr_update, corr_value, pawn_key, piece_key, ContKey, History, CORR_GRAIN};
-use crate::movepick::MovePicker;
+use crate::history::{corr_update, corr_value, pawn_key, piece_key, ContKey, History, QuietCtx, CORR_GRAIN, PAWN_HIST_SIZE};
+use crate::movepick::{MovePicker, OrderInfo};
 use crate::nnue::{Accumulators, Network};
 use crate::params as p;
 use crate::position::Position;
@@ -84,6 +84,8 @@ struct StackEntry {
     excluded: Move,
     cont: ContKey,
     current: Move,
+    /// Quiet-history context of this node's moves (set before its move loop).
+    qctx: QuietCtx,
 }
 
 pub struct SearchResult {
@@ -378,6 +380,19 @@ impl Searcher {
         if p::cont4() != 0 && ply >= 4 { self.stack[ply - 4].cont } else { ContKey::NONE }
     }
 
+    /// History context for quiet moves at this node.
+    fn quiet_ctx(&self, pos: &Position, ply: usize, threats: Option<Bitboard>) -> QuietCtx {
+        let (c1, c2) = self.cont_keys(ply);
+        QuietCtx {
+            stm: pos.side_to_move(),
+            threats: if p::threat_hist() != 0 { threats.unwrap_or_else(|| pos.threats().all) } else { 0 },
+            pawn: if p::pawn_hist() != 0 { pawn_index(pos) } else { 0 },
+            c1,
+            c2,
+            c4: self.cont4_key(ply),
+        }
+    }
+
     fn hist_bonus(depth: i32) -> i32 {
         (p::hist_mult() * depth).min(p::hist_max())
     }
@@ -429,9 +444,8 @@ impl Searcher {
             {
                 // A quiet move that the table says refutes this node earns history, as a search cutoff would.
                 if p::tt_hist() != 0 && tt_score >= beta && !e.mv.is_null() && e.mv.is_quiet() && pos.is_legal(e.mv) {
-                    let (c1, c2) = self.cont_keys(ply);
-                    let c4 = self.cont4_key(ply);
-                    self.history.update_quiet(pos.side_to_move(), pos.moved_piece(e.mv), e.mv, c1, c2, c4, Self::hist_bonus(depth));
+                    let q = self.quiet_ctx(pos, ply, None);
+                    self.history.update_quiet(&q, pos.moved_piece(e.mv), e.mv, Self::hist_bonus(depth));
                 }
                 return tt_score;
             }
@@ -500,7 +514,8 @@ impl Searcher {
             let prev_eval = self.stack[ply - 1].static_eval;
             if !prev.is_null() && prev.is_quiet() && prev_eval != -INF {
                 let bonus = (-p::eval_hist() * (prev_eval + static_eval)).clamp(-1500, 1500);
-                self.history.update_butterfly(pos.side_to_move().flip(), prev, bonus);
+                let pq = self.stack[ply - 1].qctx;
+                self.history.update_butterfly(&pq, prev, bonus);
             }
         }
         let improving = !in_check && ply >= 2 && static_eval > self.stack[ply - 2].static_eval;
@@ -558,7 +573,7 @@ impl Searcher {
                 && !tt_hit.is_some_and(|e| e.depth >= depth - 3 && tt_score < pc_beta)
             {
                 let (c1, c2) = self.cont_keys(ply);
-                let mut picker = MovePicker::qsearch(pos, tt_move, c1, c2);
+                let mut picker = MovePicker::qsearch(pos, tt_move, QuietCtx::new(us, c1, c2));
                 while let Some(m) = picker.next(pos, &self.history) {
                     if !see_ge(pos, m, pc_beta - static_eval) {
                         continue;
@@ -588,11 +603,18 @@ impl Searcher {
             depth -= 1;
         }
 
-        let (c1, c2) = self.cont_keys(ply);
-        let c4 = self.cont4_key(ply);
+        let threats = if p::threat_hist() != 0 || p::threat_order() != 0 { Some(pos.threats()) } else { None };
+        let qctx = self.quiet_ctx(pos, ply, threats.map(|t| t.all));
+        self.stack[ply].qctx = qctx;
+        let c1 = qctx.c1;
         let counter = if c1.piece != 12 { self.history.counter[c1.piece as usize][c1.to as usize] } else { Move::NULL };
-        let mut picker = MovePicker::new(pos, tt_move, self.stack[ply].killers, counter, c1, c2);
-        picker.c4 = c4;
+        let mut picker = MovePicker::new(pos, tt_move, self.stack[ply].killers, counter, qctx);
+        if p::threat_order() != 0 || p::check_order() != 0 {
+            picker.order = Some(OrderInfo {
+                threats: threats.unwrap_or_default(),
+                check_sq: if p::check_order() != 0 { pos.check_squares() } else { [0; 6] },
+            });
+        }
         let mut best_score = -INF;
         let mut best_move = Move::NULL;
         let mut moves_searched = 0usize;
@@ -611,7 +633,7 @@ impl Searcher {
             }
             let is_quiet = m.is_quiet();
             let piece = pos.moved_piece(m);
-            let hist = if is_quiet { self.history.quiet_score(us, piece, m, c1, c2, c4) } else { 0 };
+            let hist = if is_quiet { self.history.quiet_score(&qctx, piece, m) } else { 0 };
             let lmr_base = self.lmr[(depth as usize).min(63)][moves_searched.min(63)];
 
             if !root && best_score > -TB_WIN_IN_MAX {
@@ -768,10 +790,10 @@ impl Searcher {
             let bonus = Self::hist_bonus(depth);
             let bp = pos.moved_piece(best_move);
             if best_move.is_quiet() {
-                self.history.update_quiet(us, bp, best_move, c1, c2, c4, bonus);
+                self.history.update_quiet(&qctx, bp, best_move, bonus);
                 for &q in &quiets[..n_quiets] {
                     let qp = pos.moved_piece(q);
-                    self.history.update_quiet(us, qp, q, c1, c2, c4, -bonus);
+                    self.history.update_quiet(&qctx, qp, q, -bonus);
                 }
                 let k = &mut self.stack[ply].killers;
                 if k[0] != best_move {
@@ -800,9 +822,8 @@ impl Searcher {
             let prev = self.stack[ply - 1].current;
             let pk = self.stack[ply - 1].cont;
             if !prev.is_null() && prev.is_quiet() && pk.piece != 12 {
-                let (p1, p2) = self.cont_keys(ply - 1);
-                let p4 = self.cont4_key(ply - 1);
-                self.history.update_quiet(us.flip(), Piece(pk.piece), prev, p1, p2, p4, Self::hist_bonus(depth));
+                let pq = self.stack[ply - 1].qctx;
+                self.history.update_quiet(&pq, Piece(pk.piece), prev, Self::hist_bonus(depth));
             }
         }
 
@@ -914,7 +935,11 @@ impl Searcher {
 
         let (c1, c2) = self.cont_keys(ply);
         let tt_move = tt_hit.map_or(Move::NULL, |e| e.mv);
-        let mut picker = MovePicker::qsearch(pos, tt_move, c1, c2);
+        let mut qctx = QuietCtx::new(pos.side_to_move(), c1, c2);
+        if in_check && p::pawn_hist() != 0 {
+            qctx.pawn = pawn_index(pos);
+        }
+        let mut picker = MovePicker::qsearch(pos, tt_move, qctx);
         let mut best_move = Move::NULL;
         let mut moves_searched = 0;
         let fut_base = if in_check || p::qs_fut_margin() == 0 { -INF } else { static_eval + p::qs_fut_margin() };
@@ -1140,6 +1165,12 @@ impl Searcher {
         result.nodes = self.nodes;
         result
     }
+}
+
+/// Index of the pawn structure in the pawn history.
+#[inline(always)]
+fn pawn_index(pos: &Position) -> usize {
+    pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn)) & (PAWN_HIST_SIZE - 1)
 }
 
 #[inline(always)]

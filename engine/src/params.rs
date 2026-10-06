@@ -85,4 +85,8 @@ tunables! {
     cont4: 0, 0, 1;               // continuation history also keyed by our own move two turns ago
     corr_joint: 0, 0, 1;          // correction tables learn jointly (each toward what the others leave), not each the whole error
     smp_vote: 0, 0, 1;            // experimental: choose a move using completed searches from every worker
+    threat_hist: 0, 0, 1;         // quiet history learns separately when a move leaves or enters an attacked square
+    pawn_hist: 0, 0, 1;           // quiet history per pawn structure
+    threat_order: 0, 0, 300;      // order quiets that rescue a piece attacked by a cheaper one first (% of base values)
+    check_order: 0, 0, 65536;     // ordering bonus for a quiet move that gives check and does not lose material
 }

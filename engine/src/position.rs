@@ -33,6 +33,15 @@ pub struct Position {
     pinned: Bitboard,
 }
 
+/// Squares attacked by the opponent, by attacker class (see [`Position::threats`]).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Threats {
+    pub pawn: Bitboard,
+    pub minor: Bitboard,
+    pub rook: Bitboard,
+    pub all: Bitboard,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FenError(pub String);
 
@@ -201,6 +210,40 @@ impl Position {
             || (king_attacks(sq) & p[5] & them) != 0
             || (rook_attacks(sq, occ) & (p[3] | p[4]) & them) != 0
             || (bishop_attacks(sq, occ) & (p[2] | p[4]) & them) != 0
+    }
+
+    /// Squares the side not to move attacks, by class of attacker, each set
+    /// including the cheaper classes: pawns; pawns and minor pieces; pawns,
+    /// minors and rooks; and every piece.
+    pub fn threats(&self) -> Threats {
+        let them = self.stm.flip();
+        let occ = self.occupied();
+        let pawn = pawn_attacks_bb(them, self.pieces(them, PieceType::Pawn));
+        let mut minor = pawn;
+        for sq in squares(self.pieces(them, PieceType::Knight)) {
+            minor |= knight_attacks(sq);
+        }
+        for sq in squares(self.pieces(them, PieceType::Bishop)) {
+            minor |= bishop_attacks(sq, occ);
+        }
+        let mut rook = minor;
+        for sq in squares(self.pieces(them, PieceType::Rook)) {
+            rook |= rook_attacks(sq, occ);
+        }
+        let mut all = rook | king_attacks(self.king_sq(them));
+        for sq in squares(self.pieces(them, PieceType::Queen)) {
+            all |= queen_attacks(sq, occ);
+        }
+        Threats { pawn, minor, rook, all }
+    }
+
+    /// Squares from which a piece of each type would check the opponent's king directly.
+    pub fn check_squares(&self) -> [Bitboard; 6] {
+        let them = self.stm.flip();
+        let ksq = self.king_sq(them);
+        let occ = self.occupied();
+        let (b, r) = (bishop_attacks(ksq, occ), rook_attacks(ksq, occ));
+        [pawn_attacks(them, ksq), knight_attacks(ksq), b, r, b | r, 0]
     }
 
     fn update_check_info(&mut self) {

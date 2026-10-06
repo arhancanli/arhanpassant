@@ -1,12 +1,26 @@
 //! Staged move ordering: hash move, good captures, quiets (history-ordered,
 //! killers and counter-move first), then losing captures.
 
-use crate::history::{ContKey, History};
+use crate::bitboard::bb;
+use crate::history::{History, QuietCtx};
 use crate::movegen::{generate, kind, MoveList, MAX_MOVES};
-use crate::position::Position;
+use crate::params as p;
+use crate::position::{Position, Threats};
 use crate::see::{see_ge, see_value};
 use crate::types::*;
 use std::mem::MaybeUninit;
+
+/// Board facts for ordering quiet moves beyond their history: which pieces
+/// are attacked by cheaper ones, and which squares give check.
+#[derive(Copy, Clone, Debug)]
+pub struct OrderInfo {
+    pub threats: Threats,
+    pub check_sq: [Bitboard; 6],
+}
+
+/// Ordering value of rescuing (or, x0.95 against, endangering) a piece of each
+/// type from an attack by a cheaper piece, before the `threat_order` scale.
+const THREAT_VALUE: [i32; 6] = [0, 14000, 14000, 24000, 48000, 0];
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum Stage {
@@ -24,10 +38,9 @@ pub struct MovePicker {
     tt_move: Move,
     killers: [Move; 2],
     counter: Move,
-    c1: ContKey,
-    c2: ContKey,
-    /// 4-ply continuation key (`ContKey::NONE` when the `cont4` setting is off).
-    pub c4: ContKey,
+    ctx: QuietCtx,
+    /// Threat and check information for quiet ordering (None when those settings are off).
+    pub order: Option<OrderInfo>,
     /// Moves of the current stage; scores[i] belongs to moves[i] (uninitialised past len).
     moves: MoveList,
     scores: [MaybeUninit<i32>; MAX_MOVES],
@@ -41,16 +54,15 @@ pub struct MovePicker {
 }
 
 impl MovePicker {
-    pub fn new(pos: &Position, tt_move: Move, killers: [Move; 2], counter: Move, c1: ContKey, c2: ContKey) -> MovePicker {
+    pub fn new(pos: &Position, tt_move: Move, killers: [Move; 2], counter: Move, ctx: QuietCtx) -> MovePicker {
         let tt_ok = !tt_move.is_null() && pos.is_legal(tt_move);
         MovePicker {
             stage: if tt_ok { Stage::TtMove } else { Stage::GenNoisy },
             tt_move: if tt_ok { tt_move } else { Move::NULL },
             killers,
             counter,
-            c1,
-            c2,
-            c4: ContKey::NONE,
+            ctx,
+            order: None,
             moves: MoveList::new(),
             scores: [const { MaybeUninit::uninit() }; MAX_MOVES],
             len: 0,
@@ -62,10 +74,10 @@ impl MovePicker {
         }
     }
 
-    pub fn qsearch(pos: &Position, tt_move: Move, c1: ContKey, c2: ContKey) -> MovePicker {
+    pub fn qsearch(pos: &Position, tt_move: Move, ctx: QuietCtx) -> MovePicker {
         let in_check = pos.in_check();
         let usable = !tt_move.is_null() && (in_check || tt_move.is_noisy());
-        let mut mp = MovePicker::new(pos, if usable { tt_move } else { Move::NULL }, [Move::NULL; 2], Move::NULL, c1, c2);
+        let mut mp = MovePicker::new(pos, if usable { tt_move } else { Move::NULL }, [Move::NULL; 2], Move::NULL, ctx);
         mp.qsearch = true;
         mp.skip_quiets = !in_check;
         mp
@@ -157,11 +169,31 @@ impl MovePicker {
                         self.stage = Stage::BadNoisy;
                         continue;
                     }
-                    let stm = pos.side_to_move();
-                    let (c1, c2, c4, killers, counter) = (self.c1, self.c2, self.c4, self.killers, self.counter);
+                    let (ctx, killers, counter, order) = (self.ctx, self.killers, self.counter, self.order);
+                    let (threat_scale, check_bonus) = (p::threat_order(), p::check_order());
                     self.fill(pos, kind::QUIET, |m| {
                         let piece = pos.moved_piece(m);
-                        let mut score = hist.quiet_score(stm, piece, m, c1, c2, c4);
+                        let mut score = hist.quiet_score(&ctx, piece, m);
+                        if let Some(o) = &order {
+                            let pt = piece.piece_type();
+                            if threat_scale != 0 {
+                                let lesser = match pt {
+                                    PieceType::Knight | PieceType::Bishop => o.threats.pawn,
+                                    PieceType::Rook => o.threats.minor,
+                                    PieceType::Queen => o.threats.rook,
+                                    _ => 0,
+                                };
+                                let v = THREAT_VALUE[pt.idx()] * threat_scale / 100;
+                                if lesser & bb(m.to()) != 0 {
+                                    score -= v * 95 / 100;
+                                } else if lesser & bb(m.from()) != 0 {
+                                    score += v;
+                                }
+                            }
+                            if check_bonus != 0 && o.check_sq[pt.idx()] & bb(m.to()) != 0 && see_ge(pos, m, -75) {
+                                score += check_bonus;
+                            }
+                        }
                         if m == killers[0] {
                             score += 1 << 22;
                         } else if m == killers[1] {
