@@ -61,10 +61,42 @@ fn squared_dot_small(acc: &[i16], weights: &[i16]) -> i64 {
         // SAFETY: as squared_dot; the caller guarantees the weight bound.
         unsafe { squared_dot_small_neon(acc, weights) }
     }
-    #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    {
+        // SAFETY: this build requires AVX2; loads stay inside complete 16-lane chunks.
+        unsafe { squared_dot_small_avx2(acc, weights) }
+    }
+    #[cfg(not(any(all(target_arch = "aarch64", target_feature = "neon"), all(target_arch = "x86_64", target_feature = "avx2"))))]
     {
         squared_dot_scalar(acc, weights)
     }
+}
+
+/// AVX2: i16 product, then `madd` (two products per i32 lane per chunk), widened
+/// to i64 every 64 chunks (64 * 2 * 255 * 128 * 255 < 2^31): exact.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[target_feature(enable = "avx2")]
+unsafe fn squared_dot_small_avx2(acc: &[i16], weights: &[i16]) -> i64 {
+    use std::arch::x86_64::*;
+    let n = acc.len().min(weights.len());
+    let (values, tail) = acc[..n].as_chunks::<16>();
+    let (weights, weight_tail) = weights[..n].as_chunks::<16>();
+    let zero = _mm256_setzero_si256();
+    let cap = _mm256_set1_epi16(QA as i16);
+    let mut total = 0i64;
+    for (vb, wb) in values.chunks(64).zip(weights.chunks(64)) {
+        let mut sum = _mm256_setzero_si256();
+        for (a, w) in vb.iter().zip(wb) {
+            let c = _mm256_min_epi16(_mm256_max_epi16(_mm256_loadu_si256(a.as_ptr().cast()), zero), cap);
+            let p = _mm256_mullo_epi16(c, _mm256_loadu_si256(w.as_ptr().cast()));
+            sum = _mm256_add_epi32(sum, _mm256_madd_epi16(p, c));
+        }
+        let wide = _mm256_add_epi64(_mm256_cvtepi32_epi64(_mm256_castsi256_si128(sum)), _mm256_cvtepi32_epi64(_mm256_extracti128_si256::<1>(sum)));
+        let mut lanes = [0i64; 4];
+        _mm256_storeu_si256(lanes.as_mut_ptr().cast(), wide);
+        total += lanes.iter().sum::<i64>();
+    }
+    total + squared_dot_scalar(tail, weight_tail)
 }
 
 #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
