@@ -107,4 +107,6 @@ tunables! {
     lmr_corr: 0, 0, 1000;         // reduce less by |eval correction| / this (0 = off)
     lmr_pv: 0, 0, 1;              // reduce late moves from the second move at PV nodes too (not the root)
     upcoming_rep: 0, 0, 1;        // a side that can force a repetition scores at least a draw (cuckoo tables)
+    tt_cut_node: 0, 0, 1;         // table cutoffs at depth <= 5 only where the node type agrees with the bound
+    nmp_cutnode: 0, 0, 1;         // null-move pruning only at expected cut nodes
 }

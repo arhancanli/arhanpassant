@@ -522,6 +522,8 @@ impl Searcher {
                 && (e.bound == BOUND_EXACT
                     || (e.bound == BOUND_LOWER && tt_score >= beta)
                     || (e.bound == BOUND_UPPER && tt_score <= alpha))
+                // At shallow depth, only cut where the node type agrees with the bound.
+                && (p::tt_cut_node() == 0 || depth > 5 || cut_node == (tt_score >= beta))
             {
                 // A quiet move that the table says refutes this node earns history, as a search cutoff would.
                 if p::tt_hist() != 0 && tt_score >= beta && !e.mv.is_null() && e.mv.is_quiet() && pos.is_legal(e.mv) {
@@ -647,6 +649,7 @@ impl Searcher {
             }
             // Null-move pruning.
             if depth >= 3
+                && (p::nmp_cutnode() == 0 || cut_node)
                 && eval >= beta
                 && static_eval >= beta
                 && ply >= 1
