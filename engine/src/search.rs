@@ -723,17 +723,19 @@ impl Searcher {
             depth -= 1;
         }
 
-        let threats = if p::threat_hist() != 0 || p::threat_order() != 0 { Some(pos.threats()) } else { None };
-        let qctx = self.quiet_ctx(pos, ply, threats.map(|t| t.all));
+        // The threat map is computed when the first quiet move needs it
+        // (many nodes cut off on the table move or a capture before that).
+        let need_threats = p::threat_hist() != 0 || p::threat_order() != 0;
+        let mut threats_ready = !need_threats;
+        let mut qctx = self.quiet_ctx(pos, ply, Some(0));
         self.stack[ply].qctx = qctx;
         let c1 = qctx.c1;
         let counter = if c1.piece != 12 { self.history.counter[c1.piece as usize][c1.to as usize] } else { Move::NULL };
         let mut picker = MovePicker::new(pos, tt_move, self.stack[ply].killers, counter, qctx);
+        picker.need_threats = need_threats;
         if p::threat_order() != 0 || p::check_order() != 0 {
-            picker.order = Some(OrderInfo {
-                threats: threats.unwrap_or_default(),
-                check_sq: if p::check_order() != 0 { pos.check_squares() } else { [0; 6] },
-            });
+            picker.order = Some(OrderInfo { threats: Default::default(), check_sq: [0; 6] });
+            picker.need_check_sq = p::check_order() != 0;
         }
         let mut best_score = -INF;
         let mut best_move = Move::NULL;
@@ -753,6 +755,14 @@ impl Searcher {
             }
             let is_quiet = m.is_quiet();
             let piece = pos.moved_piece(m);
+            if is_quiet && !threats_ready {
+                let t = picker.threats().unwrap_or_else(|| pos.threats());
+                picker.provide_threats(t);
+                if p::threat_hist() != 0 {
+                    qctx.threats = t.all;
+                }
+                threats_ready = true;
+            }
             let hist = if is_quiet { self.history.quiet_score(&qctx, piece, m) } else { 0 };
             let lmr_base = self.lmr[(depth as usize).min(63)][moves_searched.min(63)];
 
@@ -829,6 +839,7 @@ impl Searcher {
             let child = pos.after(m);
             self.stack[ply].current = m;
             self.stack[ply].cont = ContKey { piece: piece.0, to: m.to() };
+            self.stack[ply].qctx = qctx;
             self.push_move(pos, m, &child, ply);
             if PV {
                 self.pv_len[ply + 1] = ply + 1;

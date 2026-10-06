@@ -41,6 +41,11 @@ pub struct MovePicker {
     ctx: QuietCtx,
     /// Threat and check information for quiet ordering (None when those settings are off).
     pub order: Option<OrderInfo>,
+    /// Compute the threat map when quiets are generated, unless search provided it.
+    pub need_threats: bool,
+    /// Compute check squares when quiets are generated.
+    pub need_check_sq: bool,
+    threats: Option<Threats>,
     /// Moves of the current stage; scores[i] belongs to moves[i] (uninitialised past len).
     moves: MoveList,
     scores: [MaybeUninit<i32>; MAX_MOVES],
@@ -63,6 +68,9 @@ impl MovePicker {
             counter,
             ctx,
             order: None,
+            need_threats: false,
+            need_check_sq: false,
+            threats: None,
             moves: MoveList::new(),
             scores: [const { MaybeUninit::uninit() }; MAX_MOVES],
             len: 0,
@@ -81,6 +89,22 @@ impl MovePicker {
         mp.qsearch = true;
         mp.skip_quiets = !in_check;
         mp
+    }
+
+    /// The threat map, once computed (by search or by quiet generation).
+    pub fn threats(&self) -> Option<Threats> {
+        self.threats
+    }
+
+    /// Use `t` as this node's threat map for quiet history and ordering.
+    pub fn provide_threats(&mut self, t: Threats) {
+        self.threats = Some(t);
+        if p::threat_hist() != 0 {
+            self.ctx.threats = t.all;
+        }
+        if let Some(o) = &mut self.order {
+            o.threats = t;
+        }
     }
 
     /// Stop handing out quiet moves (late-move / futility pruning decided they are hopeless).
@@ -169,6 +193,15 @@ impl MovePicker {
                     if self.skip_quiets {
                         self.stage = Stage::BadNoisy;
                         continue;
+                    }
+                    if self.need_threats && self.threats.is_none() {
+                        self.provide_threats(pos.threats());
+                    }
+                    if self.need_check_sq {
+                        if let Some(o) = &mut self.order {
+                            o.check_sq = pos.check_squares();
+                        }
+                        self.need_check_sq = false;
                     }
                     let (ctx, killers, counter, order) = (self.ctx, self.killers, self.counter, self.order);
                     let (threat_scale, check_bonus) = (p::threat_order(), p::check_order());
