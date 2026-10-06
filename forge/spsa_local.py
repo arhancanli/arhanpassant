@@ -16,6 +16,7 @@ last pair. State is written after every batch; a restart resumes it.
 """
 
 import argparse
+import glob
 import json
 import math
 import os
@@ -86,6 +87,10 @@ def run(args):
     total = state["total_pairs"]
     rng = random.Random(args.seed + state["pairs_done"])
     while state["pairs_done"] < total:
+        # Lowest priority: wait while test jobs are queued or a test match is running.
+        while args.yield_queue and (glob.glob(os.path.join(args.yield_queue, "*.sh")) or subprocess.run(
+                ["pgrep", "-f", "[b]in/arena .*arhanpassant-data/elo/"], capture_output=True).returncode == 0):
+            time.sleep(30)
         k = state["pairs_done"] + 1
         n = min(args.batch, total - state["pairs_done"])
         plus, minus, deltas, steps = {}, {}, {}, {}
@@ -136,6 +141,7 @@ def main():
     ap.add_argument("--concurrency", type=int, default=16)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--fixed", nargs="*", default=[], help="extra opt.X=Y for both sides")
+    ap.add_argument("--yield-queue", help="pause while this test queue has jobs or a test match runs")
     args = ap.parse_args()
     if args.cmd == "run":
         if not (args.engine and args.arena and args.book):
