@@ -1,0 +1,19 @@
+[
+ {"name": "hist_mult",        "start": 300,   "min": 100,  "max": 600,   "c_end": 20,   "r_end": 0.002},
+ {"name": "hist_max",         "start": 2400,  "min": 800,  "max": 4000,  "c_end": 150,  "r_end": 0.002},
+ {"name": "malus_mult",       "start": 300,   "min": 100,  "max": 800,   "c_end": 20,   "r_end": 0.002},
+ {"name": "malus_max",        "start": 2400,  "min": 800,  "max": 6000,  "c_end": 150,  "r_end": 0.002},
+ {"name": "w_butterfly",      "start": 64,    "min": 16,   "max": 160,   "c_end": 5,    "r_end": 0.002},
+ {"name": "w_pawn",           "start": 64,    "min": 0,    "max": 160,   "c_end": 5,    "r_end": 0.002},
+ {"name": "w_cont1",          "start": 64,    "min": 16,   "max": 160,   "c_end": 5,    "r_end": 0.002},
+ {"name": "w_cont2",          "start": 64,    "min": 0,    "max": 160,   "c_end": 5,    "r_end": 0.002},
+ {"name": "threat_order",     "start": 100,   "min": 0,    "max": 300,   "c_end": 10,   "r_end": 0.002},
+ {"name": "check_order",      "start": 16384, "min": 0,    "max": 65536, "c_end": 1500, "r_end": 0.002},
+ {"name": "mvv_mult",         "start": 16,    "min": 4,    "max": 40,    "c_end": 1.5,  "r_end": 0.002},
+ {"name": "corr_pawn",        "start": 128,   "min": 0,    "max": 256,   "c_end": 10,   "r_end": 0.002},
+ {"name": "corr_np",          "start": 128,   "min": 0,    "max": 256,   "c_end": 10,   "r_end": 0.002},
+ {"name": "corr_cont",        "start": 128,   "min": 0,    "max": 256,   "c_end": 10,   "r_end": 0.002},
+ {"name": "tm_soft_pct",      "start": 60,    "min": 30,   "max": 120,   "c_end": 4,    "r_end": 0.002},
+ {"name": "tm_node_base",     "start": 150,   "min": 100,  "max": 250,   "c_end": 8,    "r_end": 0.002},
+ {"name": "tm_node_mult",     "start": 135,   "min": 50,   "max": 250,   "c_end": 8,    "r_end": 0.002}
+]
