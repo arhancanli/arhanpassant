@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-06T11:18:58Z",
+ "updated": "2026-10-06T13:43:39Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -674,6 +674,44 @@
    "decision": "H0",
    "runtime": "local",
    "evidence": "local-corr-joint-9beb6fb3630b-d6367c515de8.json"
+  },
+  {
+   "date": "20261006",
+   "name": "corr-cont-joint",
+   "change": "Eval correction also learned per previous move, with the tables learning jointly",
+   "candidate": {
+    "tm_nodes": "1",
+    "corr_pawn": "128",
+    "corr_np": "128",
+    "lmr_deeper": "1",
+    "mopup": "1",
+    "prior_bonus": "1",
+    "corr_joint": "1",
+    "corr_cont": "128"
+   },
+   "baseline": {
+    "tm_nodes": "1",
+    "corr_pawn": "128",
+    "corr_np": "128",
+    "lmr_deeper": "1",
+    "mopup": "1",
+    "prior_bonus": "1"
+   },
+   "network": "champion-0.12.0.nnue",
+   "build": "9beb6fb3630b-d6367c515de8",
+   "tc": "8+0.08",
+   "bounds": [
+    0.0,
+    5.0
+   ],
+   "games": 3072,
+   "elo": 10.2,
+   "eloLo": 3.1,
+   "eloHi": 17.2,
+   "llr": 2.96,
+   "decision": "H1",
+   "runtime": "local",
+   "evidence": "local-corr-cont-joint-9beb6fb3630b-d6367c515de8.json"
   }
  ],
  "anchors": {
