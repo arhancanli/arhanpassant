@@ -8,7 +8,7 @@ sprt2.sh) and Oracle ap-a1 (ssh ubuntu@141.145.154.73, ~/queue, vm-tests.sh).
 ## Accepted (SPRT [0,5] at 5+0.05)
 - speed patch 7262ce5: +28.3 [11.4, 45.4] (504 g)
 - order bundle threat_hist=1 pawn_hist=1 threat_order=100 check_order=16384: +11.2 [3.7, 18.6] (2,676 g)
-- (Codex, already passed) corr_joint=1 corr_cont=128: +10.2
+- (passed earlier, 3,072 games) corr_joint=1 corr_cont=128: +10.2
 
 ## Network 0.13.0-rl1 (dae1ac9, bench 372,903) — RL round 1 PASSED +27.3 [14.9, 39.8] (1,032 g)
 champion 0.12 fine-tuned 3 epochs, lr 1e-4, factorised, on 20M fresh positions
