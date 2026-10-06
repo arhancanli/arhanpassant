@@ -115,17 +115,25 @@ def round_files(state, rnd):
     return files + r.get("oci_files", [])
 
 
+def spawn(cmd, logfile):
+    """Start a long-running job detached from this process (its own session, output to a log)."""
+    with open(logfile, "a") as out:
+        subprocess.Popen(["nice", "-n", "19", *cmd], cwd=DATA, stdin=subprocess.DEVNULL, stdout=out,
+                         stderr=subprocess.STDOUT, start_new_session=True)
+
+
 def start_mac_datagen(binary, rnd):
-    sh(["pkill", "-f", "[d]atagen --threads"])
+    # Any engine build's self-play, whatever the order of its arguments.
+    sh(["pkill", "-f", "[a]p-net-[^ ]* datagen"])
     time.sleep(2)
     dirs = [f"{DATA}/selfplay/r{rnd}-mac", f"{DATA}/selfplay/r{rnd}-active"]
     for d in dirs:
         os.makedirs(d, exist_ok=True)
     seed = int(time.time())
-    base = f"cd {DATA} && nohup nice -n 19 {binary} datagen --nodes 8000 --positions-per-file 1000000"
-    sh(f"{base} --threads {MAC_THREADS} --seed {seed} --out {dirs[0]} > {RL}/datagen-r{rnd}.log 2>&1 &")
-    sh(f"{base} --threads {MAC_SEEDED} --seed {seed + 17} --book {DATA}/active/seeds.epd "
-       f"--random-plies 2 --out {dirs[1]} > {RL}/datagen-r{rnd}-active.log 2>&1 &")
+    base = [binary, "datagen", "--nodes", "8000", "--positions-per-file", "1000000"]
+    spawn([*base, "--threads", str(MAC_THREADS), "--seed", str(seed), "--out", dirs[0]], f"{RL}/datagen-r{rnd}.log")
+    spawn([*base, "--threads", str(MAC_SEEDED), "--seed", str(seed + 17), "--book", f"{DATA}/active/seeds.epd",
+           "--random-plies", "2", "--out", dirs[1]], f"{RL}/datagen-r{rnd}-active.log")
     return dirs
 
 
@@ -174,9 +182,11 @@ def result(name):
     return None
 
 
-def promote(state, rnd, cand, res):
+def promote(state, rnd, cand, res, trained):
     version = f"0.13.0-rl{rnd}"
-    summary = (f"RL round {rnd}: fine-tuned on {state['rounds'][str(rnd)]['positions']:,} fresh self-play positions, "
+    # `trained` is the count when training started; the round keeps collecting while the SPRT runs.
+    prev = f" plus round {rnd - 1}'s" if str(rnd - 1) in state["rounds"] else ""
+    summary = (f"RL round {rnd}: fine-tuned on {trained:,} fresh self-play positions{prev}, "
                f"{res['elo']:+.1f} Elo (95% [{res['elo_lo']:.1f}, {res['elo_hi']:.1f}], {res['games']:,} games at 5+0.05)")
     r = sh(["bash", f"{REPO}/forge/promote_net.sh", cand, version, summary], cwd=REPO)
     log(r.stdout.strip()[-300:] + r.stderr.strip()[-300:])
@@ -216,7 +226,7 @@ def main():
                                                   "games": res["games"], "positions": pending["positions"]})
                 r.pop("pending")
                 save(state)
-                if res["decision"] == "H1" and promote(state, rnd, pending["cand"], res):
+                if res["decision"] == "H1" and promote(state, rnd, pending["cand"], res, pending["positions"]):
                     log(f"promoted round {rnd}; round {rnd + 1} started")
                     continue
                 r["next_try_at"] = int(r["positions"] * 1.5)
