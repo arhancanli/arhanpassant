@@ -41,6 +41,20 @@ def default_buckets():
     return m
 
 
+def buckets16():
+    """16 king buckets, each inside one of the 8 default buckets: the back
+    rank by file pair as before, the second rank by file, ranks 3 and 4 and the
+    pairs 5-6 and 7-8 each split into queen side and king side."""
+    m = np.zeros(64, dtype=np.int64)
+    for sq in range(64):
+        file, rank = sq % 8, sq // 8
+        f = file if file < 4 else 7 - file
+        side = int(f >= 2)
+        m[sq] = (f if rank == 0 else 4 + f if rank == 1 else 8 + side if rank == 2 else 10 + side if rank == 3
+                 else 12 + side if rank in (4, 5) else 14 + side)
+    return m
+
+
 # Network layout; set from the command line before anything is decoded.
 LAYOUT = {"input_buckets": 1, "output_buckets": 1, "mirror": False, "map": np.zeros(64, dtype=np.int64)}
 
@@ -49,9 +63,9 @@ def set_layout(input_buckets, output_buckets):
     LAYOUT["input_buckets"] = input_buckets
     LAYOUT["output_buckets"] = output_buckets
     LAYOUT["mirror"] = input_buckets > 1
-    LAYOUT["map"] = default_buckets() if input_buckets > 1 else np.zeros(64, dtype=np.int64)
-    if input_buckets not in (1, 8):
-        sys.exit("--input-buckets must be 1 or 8")
+    LAYOUT["map"] = {1: np.zeros(64, dtype=np.int64), 8: default_buckets(), 16: buckets16()}.get(input_buckets)
+    if LAYOUT["map"] is None:
+        sys.exit("--input-buckets must be 1, 8 or 16")
 
 
 BLOCK = 4096  # records read contiguously; blocks are shuffled, then records within a buffer
@@ -244,12 +258,23 @@ def load_nnue_into(net, path):
     version, hidden = struct.unpack("<II", b[4:12])
     off = 12
     ib, obk = 1, 1
+    file_map = np.zeros(64, dtype=np.int64)
     if version == 2:
         ib, obk, _flags = struct.unpack("<III", b[12:24])
+        file_map = np.frombuffer(b, dtype=np.uint8, count=64, offset=24).astype(np.int64)
         off = 24 + 64
     # A wider run starts from k copies of every neuron with output weights / k:
     # the same function (up to the small symmetry-breaking noise), more capacity.
-    if net.hidden % hidden or ib != LAYOUT["input_buckets"] or obk != LAYOUT["output_buckets"]:
+    # More king buckets: each new bucket starts as the file's bucket for the same
+    # king squares, which is exact when the new buckets subdivide the old ones.
+    run_ib = LAYOUT["input_buckets"]
+    source_of = np.zeros(run_ib, dtype=np.int64)
+    for sq in range(64):
+        source_of[LAYOUT["map"][sq]] = file_map[sq]
+    for sq in range(64):
+        if file_map[sq] != source_of[LAYOUT["map"][sq]]:
+            sys.exit(f"{path}: this run's king buckets do not subdivide the file's")
+    if net.hidden % hidden or obk != LAYOUT["output_buckets"]:
         sys.exit(f"{path}: layout {hidden}/{ib}/{obk} does not match this run")
     k = net.hidden // hidden
     def take(n, dtype):
@@ -261,6 +286,7 @@ def load_nnue_into(net, path):
         ftw = take(ib * 768 * hidden, "<i2").reshape(ib * 768, hidden) / QA
         ftb = take(hidden, "<i2") / QA
         ow = take(obk * 2 * hidden, "<i2").reshape(obk, 2, hidden)
+        ftw = ftw.reshape(ib, 768, hidden)[torch.from_numpy(source_of)].reshape(run_ib * 768, hidden)
         net.ft.weight.copy_(ftw.repeat(1, k))
         net.ft_bias.copy_(ftb.repeat(k))
         # Split each quantised output weight into k integers with the same sum
