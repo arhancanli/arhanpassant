@@ -232,7 +232,7 @@ impl Searcher {
     /// Keys of the correction tables for a position: pawn structure, each
     /// side's other pieces, and the previous move.
     #[inline(always)]
-    fn corr_keys(&self, pos: &Position, ply: usize) -> (usize, [usize; 2], Option<usize>) {
+    fn corr_keys(&self, pos: &Position, ply: usize) -> (usize, [usize; 2], Option<usize>, usize) {
         let pawns = pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn));
         let side = |c: Color| {
             piece_key([PieceType::Knight, PieceType::Bishop, PieceType::Rook, PieceType::Queen, PieceType::King].map(|pt| pos.pieces(c, pt)))
@@ -240,18 +240,29 @@ impl Searcher {
         let np = if p::corr_np() != 0 { [side(Color::White), side(Color::Black)] } else { [0, 0] };
         let prev = if ply >= 1 { self.stack[ply - 1].cont } else { ContKey::NONE };
         let cont = (prev.piece != 12).then(|| prev.piece as usize * 64 + prev.to as usize);
-        (pawns, np, cont)
+        let minor = if p::corr_minor() != 0 {
+            piece_key([
+                pos.pieces(Color::White, PieceType::Knight),
+                pos.pieces(Color::White, PieceType::Bishop),
+                pos.pieces(Color::Black, PieceType::Knight),
+                pos.pieces(Color::Black, PieceType::Bishop),
+                pos.type_bb(PieceType::King),
+            ])
+        } else {
+            0
+        };
+        (pawns, np, cont, minor)
     }
 
     /// Static evaluation adjusted by what search has learned about similar positions.
     #[inline(always)]
     fn corrected(&self, pos: &Position, raw: i32, ply: usize) -> i32 {
-        let (wp, wn, wc) = (p::corr_pawn(), p::corr_np(), p::corr_cont());
-        if wp == 0 && wn == 0 && wc == 0 {
+        let (wp, wn, wc, wm) = (p::corr_pawn(), p::corr_np(), p::corr_cont(), p::corr_minor());
+        if wp == 0 && wn == 0 && wc == 0 && wm == 0 {
             return raw;
         }
         let stm = pos.side_to_move();
-        let (pawns, np, cont) = self.corr_keys(pos, ply);
+        let (pawns, np, cont, minor) = self.corr_keys(pos, ply);
         let h = &self.history;
         let mut c = 0;
         if wp != 0 {
@@ -263,6 +274,9 @@ impl Searcher {
         }
         if let (true, Some(k)) = (wc != 0, cont) {
             c += corr_value(h.corr_cont[stm.idx()][k], wc);
+        }
+        if wm != 0 {
+            c += corr_value(h.corr_minor[stm.idx()][minor], wm);
         }
         (raw + c).clamp(-TB_WIN_IN_MAX + 1, TB_WIN_IN_MAX - 1)
     }
@@ -359,6 +373,17 @@ impl Searcher {
         false
     }
 
+    /// Score of a draw found by search: with `draw_jitter`, -1 or +1 by node
+    /// count, so that a repetition is not always exactly the same value.
+    #[inline(always)]
+    fn draw_score(&self) -> i32 {
+        if p::draw_jitter() != 0 {
+            DRAW - 1 + (self.nodes & 2) as i32
+        } else {
+            DRAW
+        }
+    }
+
     fn is_draw(&self, pos: &Position, ply: usize) -> bool {
         if pos.halfmove_clock() >= 100 && (!pos.in_check() || !pos.legal_moves().is_empty()) {
             return true;
@@ -430,7 +455,7 @@ impl Searcher {
         self.stack[ply + 2].cutoff_cnt = 0;
         if !root {
             if self.is_draw(pos, ply) {
-                return DRAW;
+                return self.draw_score();
             }
             if ply >= MAX_PLY - 1 {
                 return if in_check { DRAW } else { self.evaluate(pos, ply) };
@@ -887,14 +912,14 @@ impl Searcher {
             };
             // Learn how far search landed from the static evaluation, when the
             // result says something about it (not a capture, bound on the right side).
-            if (p::corr_pawn() != 0 || p::corr_np() != 0 || p::corr_cont() != 0)
+            if (p::corr_pawn() != 0 || p::corr_np() != 0 || p::corr_cont() != 0 || p::corr_minor() != 0)
                 && !in_check
                 && !best_move.is_noisy()
                 && best_score.abs() < TB_WIN_IN_MAX
                 && !(bound == BOUND_LOWER && best_score <= static_eval)
                 && !(bound == BOUND_UPPER && best_score >= static_eval)
             {
-                let (pawns, np, cont) = self.corr_keys(pos, ply);
+                let (pawns, np, cont, minor) = self.corr_keys(pos, ply);
                 // Each table moves toward the whole error (search minus raw eval), or, with
                 // corr_joint, toward its own value plus what the corrected eval still misses,
                 // so tables that add up do not count the same error twice. With one table on
@@ -917,6 +942,10 @@ impl Searcher {
                     let e = &mut self.history.corr_cont[us.idx()][k];
                     corr_update(e, depth, target(*e));
                 }
+                if p::corr_minor() != 0 {
+                    let e = &mut self.history.corr_minor[us.idx()][minor];
+                    corr_update(e, depth, target(*e));
+                }
             }
             self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, depth, bound, tt_pv);
         }
@@ -937,7 +966,7 @@ impl Searcher {
             return 0;
         }
         if pos.is_insufficient_material() || (ply > 0 && self.is_repetition(pos, ply)) {
-            return DRAW;
+            return self.draw_score();
         }
         let in_check = pos.in_check();
         if ply >= MAX_PLY - 1 {
@@ -993,7 +1022,19 @@ impl Searcher {
         let mut best_move = Move::NULL;
         let mut moves_searched = 0;
         let fut_base = if in_check || p::qs_fut_margin() == 0 { -INF } else { static_eval + p::qs_fut_margin() };
+        let prev_to = if ply >= 1 && !self.stack[ply - 1].current.is_null() { Some(self.stack[ply - 1].current.to()) } else { None };
         while let Some(m) = picker.next(pos, &self.history) {
+            // Late captures that are not recaptures, promotions or checks are left out.
+            if p::qs_lmp() != 0
+                && !in_check
+                && best_score > -TB_WIN_IN_MAX
+                && moves_searched >= p::qs_lmp()
+                && Some(m.to()) != prev_to
+                && m.promotion().is_none()
+                && !pos.gives_check(m)
+            {
+                continue;
+            }
             // Futility: a capture that cannot lift the score to alpha even with a margin.
             if fut_base > -INF && m.promotion().is_none() && !pos.gives_check(m) {
                 let gain = fut_base + see_value(pos.captured(m).unwrap_or(PieceType::Pawn)) * p::see_eval() / 100;

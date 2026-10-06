@@ -99,4 +99,8 @@ tunables! {
     improving_v2: 0, 0, 1;        // "improving" falls back to four plies back when two plies back was in check
     tm_falling: 0, 0, 4000;       // time: scale the soft limit by how far the score fell / this (0 = off)
     see_eval: 190, 100, 300;      // evaluation units per 100 SEE units (a pawn): converts margins between the two
+    qs_lmp: 0, 0, 8;              // quiescence: after this many moves, skip captures that are not recaptures, checks or promotions (0 = off)
+    corr_minor: 0, 0, 256;        // eval correction by the knights and bishops of both sides (0 = off)
+    draw_jitter: 0, 0, 1;         // search draws score -1 or +1 by node count
+    mvv_mult: 16, 4, 40;          // capture ordering: weight of the captured piece's value against capture history
 }

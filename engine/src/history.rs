@@ -68,6 +68,8 @@ pub struct History {
     pub corr_np: Vec<[i16; CORR_SIZE]>,
     /// [colour][previous move: piece * 64 + destination]
     pub corr_cont: Vec<[i16; 13 * 64]>,
+    /// [side to move][key of both sides' knights and bishops (and kings)]
+    pub corr_minor: Vec<[i16; CORR_SIZE]>,
 }
 
 #[inline(always)]
@@ -88,6 +90,7 @@ impl History {
             corr: vec![[0; CORR_SIZE]; 2],
             corr_np: vec![[0; CORR_SIZE]; 4],
             corr_cont: vec![[0; 13 * 64]; 2],
+            corr_minor: vec![[0; CORR_SIZE]; 2],
         })
     }
 
@@ -101,7 +104,7 @@ impl History {
         }
         self.capture = [[[0; 6]; 64]; 12];
         self.counter = [[Move::NULL; 64]; 13];
-        for c in self.corr.iter_mut().chain(self.corr_np.iter_mut()) {
+        for c in self.corr.iter_mut().chain(self.corr_np.iter_mut()).chain(self.corr_minor.iter_mut()) {
             *c = [0; CORR_SIZE];
         }
         for c in self.corr_cont.iter_mut() {

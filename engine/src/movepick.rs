@@ -147,9 +147,10 @@ impl MovePicker {
                 Stage::GenNoisy => {
                     self.fill(pos, kind::NOISY, |m| {
                         let victim = pos.captured(m).unwrap_or(PieceType::Pawn);
-                        let mut score = 16 * see_value(victim) + hist.capture_score(pos.moved_piece(m), m.to(), victim);
+                        let mvv = p::mvv_mult();
+                        let mut score = mvv * see_value(victim) + hist.capture_score(pos.moved_piece(m), m.to(), victim);
                         if m.promotion() == Some(PieceType::Queen) {
-                            score += 16 * see_value(PieceType::Queen);
+                            score += mvv * see_value(PieceType::Queen);
                         }
                         score
                     });
