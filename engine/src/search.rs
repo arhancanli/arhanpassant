@@ -29,6 +29,11 @@ pub const TB_WIN_IN_MAX: i32 = TB_WIN - MAX_PLY as i32;
 /// Soft time limit scale by how many iterations in a row the best move held.
 const STABILITY: [f64; 5] = [2.5, 1.2, 0.9, 0.8, 0.75];
 
+/// Lazy SMP depth staggering for helper threads (as in Ethereal): helper
+/// cycle c skips SKIP_SIZE[c] plies whenever (depth + c) % SKIP_DEPTHS[c] == 0.
+const SKIP_SIZE: [i32; 16] = [1, 1, 1, 2, 2, 2, 1, 3, 2, 2, 1, 3, 3, 2, 2, 1];
+const SKIP_DEPTHS: [usize; 16] = [1, 2, 2, 4, 4, 3, 2, 5, 4, 3, 2, 6, 5, 4, 3, 2];
+
 #[derive(Clone, Debug, Default)]
 pub struct Limits {
     pub depth: Option<i32>,
@@ -170,6 +175,8 @@ pub struct Searcher {
     pub tb_hits: u64,
     /// Final score of this searcher's previous search (time management).
     prev_score: Option<i32>,
+    /// 0 for the main thread, 1.. for helpers (depth staggering).
+    pub thread_index: usize,
 }
 
 impl Searcher {
@@ -201,6 +208,7 @@ impl Searcher {
             root_allowed: Vec::new(),
             tb_hits: 0,
             prev_score: None,
+            thread_index: 0,
         }
     }
 
@@ -1250,7 +1258,17 @@ impl Searcher {
         result.best_move = self.root_allowed.first().copied().unwrap_or(legal[0]);
         let max_depth = limits.depth.unwrap_or(MAX_PLY as i32 - 1).clamp(1, MAX_PLY as i32 - 1);
         let mut score = 0;
-        for depth in 1..=max_depth {
+        let mut depth = 0;
+        while depth < max_depth {
+            depth += 1;
+            // Helpers skip some depths in a fixed pattern so that threads spread
+            // over neighbouring iterations instead of repeating the same one.
+            if p::smp_skip() != 0 && self.thread_index > 0 {
+                let cycle = (self.thread_index - 1) % SKIP_SIZE.len();
+                if (depth as usize + cycle) % SKIP_DEPTHS[cycle] == 0 {
+                    depth = (depth + SKIP_SIZE[cycle]).min(max_depth);
+                }
+            }
             if self.shared.stop.load(Ordering::Relaxed) {
                 break;
             }
@@ -1461,7 +1479,8 @@ pub(crate) fn search_threads_prepared(
     let (main, helpers) = searchers.split_first_mut().expect("at least one searcher");
     let mut results = std::thread::scope(|s| {
         let mut handles = Vec::with_capacity(helpers.len());
-        for h in helpers.iter_mut() {
+        for (i, h) in helpers.iter_mut().enumerate() {
+            h.thread_index = i + 1;
             let lim = Limits { infinite: true, depth: limits.depth, nodes: limits.nodes, ..Default::default() };
             handles.push(s.spawn(move || {
                 h.verbose = false;

@@ -111,4 +111,5 @@ tunables! {
     nmp_cutnode: 0, 0, 1;         // null-move pruning only at expected cut nodes
     cap_fut: 0, 0, 800;           // capture futility base margin at reduced depth < 7 (0 = off)
     see_capt_hist: 0, 0, 512;     // capture SEE pruning threshold loosened by capture history / this (0 = off)
+    smp_skip: 0, 0, 1;            // helper threads stagger their iteration depths
 }
