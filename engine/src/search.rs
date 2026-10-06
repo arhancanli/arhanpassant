@@ -403,6 +403,11 @@ impl Searcher {
         (p::hist_mult() * depth).min(p::hist_max())
     }
 
+    /// Penalty for quiet moves and captures searched before a cutoff move.
+    fn hist_malus(depth: i32) -> i32 {
+        (p::malus_mult() * depth).min(p::malus_max())
+    }
+
     // ------------------------------------------------------------------ main search
 
     #[allow(clippy::too_many_arguments)]
@@ -592,7 +597,8 @@ impl Searcher {
                 let (c1, c2) = self.cont_keys(ply);
                 let mut picker = MovePicker::qsearch(pos, tt_move, QuietCtx::new(us, c1, c2));
                 while let Some(m) = picker.next(pos, &self.history) {
-                    if !see_ge(pos, m, pc_beta - static_eval) {
+                    // The margin is in evaluation units; SEE counts a pawn as 100.
+                    if !see_ge(pos, m, (pc_beta - static_eval) * 100 / p::see_eval()) {
                         continue;
                     }
                     let child = pos.after(m);
@@ -821,12 +827,13 @@ impl Searcher {
 
         if best_score >= beta {
             let bonus = Self::hist_bonus(depth);
+            let malus = Self::hist_malus(depth);
             let bp = pos.moved_piece(best_move);
             if best_move.is_quiet() {
                 self.history.update_quiet(&qctx, bp, best_move, bonus);
                 for &q in &quiets[..n_quiets] {
                     let qp = pos.moved_piece(q);
-                    self.history.update_quiet(&qctx, qp, q, -bonus);
+                    self.history.update_quiet(&qctx, qp, q, -malus);
                 }
                 let k = &mut self.stack[ply].killers;
                 if k[0] != best_move {
@@ -842,7 +849,7 @@ impl Searcher {
             }
             for &n in &noisies[..n_noisies] {
                 let victim = pos.captured(n).unwrap_or(PieceType::Pawn);
-                self.history.update_capture(pos.moved_piece(n), n.to(), victim, -bonus);
+                self.history.update_capture(pos.moved_piece(n), n.to(), victim, -malus);
             }
         }
 
@@ -989,7 +996,7 @@ impl Searcher {
         while let Some(m) = picker.next(pos, &self.history) {
             // Futility: a capture that cannot lift the score to alpha even with a margin.
             if fut_base > -INF && m.promotion().is_none() && !pos.gives_check(m) {
-                let gain = fut_base + see_value(pos.captured(m).unwrap_or(PieceType::Pawn));
+                let gain = fut_base + see_value(pos.captured(m).unwrap_or(PieceType::Pawn)) * p::see_eval() / 100;
                 if gain <= alpha {
                     best_score = best_score.max(gain);
                     continue;

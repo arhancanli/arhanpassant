@@ -60,6 +60,8 @@ tunables! {
     asp_delta: 20, 8, 60;
     hist_mult: 300, 100, 600;
     hist_max: 2400, 800, 4000;
+    malus_mult: 300, 100, 800;
+    malus_max: 2400, 800, 6000;
     se_depth: 8, 5, 12;
     se_double_margin: 20, 5, 60;
     qs_see: 0, -100, 100;
@@ -96,4 +98,5 @@ tunables! {
     fut_hist: 0, 0, 32768;        // futility/LMP/SEE pruning depth also counts quiet history / this (0 = off)
     improving_v2: 0, 0, 1;        // "improving" falls back to four plies back when two plies back was in check
     tm_falling: 0, 0, 4000;       // time: scale the soft limit by how far the score fell / this (0 = off)
+    see_eval: 190, 100, 300;      // evaluation units per 100 SEE units (a pawn): converts margins between the two
 }
