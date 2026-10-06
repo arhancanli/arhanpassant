@@ -15,14 +15,16 @@ REV=$(git rev-parse --short HEAD)
 cargo build --release -p arhanpassant -p arhanpassant-arena >> ~/build.log 2>&1 || { log "build failed at $REV"; sleep 600; exit 1; }
 cp target/release/arhanpassant ~/ap-$REV && cp target/release/arena ~/arena 2>/dev/null
 log "built $REV"
-mkdir -p ~/data
+mkdir -p ~/data/$REV
 upload_loop() {
   while true; do
     # A chunk nobody has written to for 10 minutes is complete (datagen appends a game every few seconds).
+    # Objects go under selfplay/<host>/<build>/ so each network's data stays apart.
     find ~/data -name '*.bin' -mmin +10 | sort | while read -r f; do
       [ -e "$f.up" ] && continue
-      if curl -fsS -X PUT --data-binary @"$f" "$PAR""selfplay/$HOST/$(basename "$f")" -o /dev/null; then
-        touch "$f.up"; log "uploaded $(basename "$f")"
+      rel=${f#$HOME/data/}
+      if curl -fsS -X PUT --data-binary @"$f" "$PAR""selfplay/$HOST/$rel" -o /dev/null; then
+        touch "$f.up"; log "uploaded $rel"
       fi
     done
     sleep 300
@@ -34,6 +36,6 @@ while true; do
   if [ -e ~/HOLD ]; then sleep 60; continue; fi
   log "datagen $THREADS threads with $REV"
   ~/ap-$REV datagen --threads "$THREADS" --nodes 8000 --seed $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') \
-    --out ~/data --positions-per-file 250000 --hours 6 \
+    --out ~/data/$REV --positions-per-file 250000 --hours 6 \
     --set corr_joint=1 --set corr_cont=128 >> ~/datagen.log 2>&1
 done
