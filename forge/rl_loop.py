@@ -149,7 +149,8 @@ def train(state, rnd):
     with open(f"{RL}/r{rnd}-manifest.json", "w") as f:
         json.dump(manifest, f)
     cmd = [PY, f"{REPO}/trainer/train.py", "--data", *manifest.keys(), "--manifest", f"{RL}/r{rnd}-manifest.json",
-           "--hidden", "512", "--input-buckets", "8", "--output-buckets", "8", "--epochs", "3", "--lr", "1e-4",
+           "--hidden", str(state.get("hidden", 512)), "--input-buckets", str(state.get("input_buckets", 8)),
+           "--output-buckets", "8", "--epochs", "3", "--lr", "1e-4",
            "--factorize", "--init-nnue", state["champion"], "--out", cand, "--workers", "4", "--threads", "4"]
     with open(f"{RL}/train-r{rnd}.log", "w") as f:
         rc = subprocess.run(["nice", "-n", "10", *cmd], stdout=f, stderr=subprocess.STDOUT).returncode
