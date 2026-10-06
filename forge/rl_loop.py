@@ -33,7 +33,7 @@ IPS = f"{HOME}/.oci/arhanpassant/ips.txt"
 SSH = ["ssh", "-i", f"{HOME}/.ssh/arhanpassant_oci", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]
 PY = f"{HOME}/arhanpassant/.venv/bin/python"
 THRESHOLD = int(os.environ.get("RL_THRESHOLD", 15_000_000))
-MAC_THREADS, MAC_SEEDED = 2, 2
+MAC_THREADS, MAC_SEEDED = 6, 2
 
 
 def now():
