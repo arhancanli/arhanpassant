@@ -86,6 +86,8 @@ struct StackEntry {
     current: Move,
     /// Quiet-history context of this node's moves (set before its move loop).
     qctx: QuietCtx,
+    /// Beta cutoffs found by nodes at this ply since the grandparent started.
+    cutoff_cnt: u32,
 }
 
 pub struct SearchResult {
@@ -416,6 +418,7 @@ impl Searcher {
         if PV && ply > self.seldepth {
             self.seldepth = ply;
         }
+        self.stack[ply + 2].cutoff_cnt = 0;
         if !root {
             if self.is_draw(pos, ply) {
                 return DRAW;
@@ -518,7 +521,17 @@ impl Searcher {
                 self.history.update_butterfly(&pq, prev, bonus);
             }
         }
-        let improving = !in_check && ply >= 2 && static_eval > self.stack[ply - 2].static_eval;
+        let improving = if p::improving_v2() != 0 {
+            // Two plies back in check has no evaluation: compare with four plies back.
+            !in_check
+                && if ply >= 2 && self.stack[ply - 2].static_eval != -INF {
+                    static_eval > self.stack[ply - 2].static_eval
+                } else {
+                    ply >= 4 && self.stack[ply - 4].static_eval != -INF && static_eval > self.stack[ply - 4].static_eval
+                }
+        } else {
+            !in_check && ply >= 2 && static_eval > self.stack[ply - 2].static_eval
+        };
         self.stack[ply + 1].killers = [Move::NULL; 2];
 
         let us = pos.side_to_move();
@@ -637,7 +650,11 @@ impl Searcher {
             let lmr_base = self.lmr[(depth as usize).min(63)][moves_searched.min(63)];
 
             if !root && best_score > -TB_WIN_IN_MAX {
-                let lmr_depth = (depth - lmr_base).max(0);
+                let lmr_depth = if p::fut_hist() != 0 && is_quiet {
+                    (depth - lmr_base + hist / p::fut_hist()).max(0)
+                } else {
+                    (depth - lmr_base).max(0)
+                };
                 if is_quiet {
                     // Late-move pruning.
                     let lmp_limit = (p::lmp_base() + depth * depth) / (2 - improving as i32);
@@ -680,7 +697,9 @@ impl Searcher {
                         } else if s_beta >= beta {
                             return s_beta;
                         } else if tt_score >= beta {
-                            ext = -1;
+                            ext = if p::se_neg() != 0 { -2 } else { -1 };
+                        } else if p::se_neg() != 0 && cut_node {
+                            ext = -2;
                         }
                     }
                 }
@@ -705,6 +724,13 @@ impl Searcher {
                         r -= hist / p::lmr_hist_div();
                     } else {
                         r -= 1;
+                        if p::lmr_capt() != 0 {
+                            let victim = pos.captured(m).unwrap_or(PieceType::Pawn);
+                            r -= self.history.capture_score(piece, m.to(), victim) / p::lmr_capt();
+                        }
+                    }
+                    if p::lmr_cutoff() != 0 && self.stack[ply + 1].cutoff_cnt > 2 {
+                        r += 1;
                     }
                     if !tt_pv {
                         r += 1;
@@ -761,6 +787,9 @@ impl Searcher {
                         self.root_best = (m, score);
                     }
                     if score >= beta {
+                        if ext < 2 || PV {
+                            self.stack[ply].cutoff_cnt += 1;
+                        }
                         break;
                     }
                     alpha = score;
@@ -815,6 +844,16 @@ impl Searcher {
 
         if PV {
             best_score = best_score.min(tb_cap);
+        }
+
+        // A fail-high is trusted less the shallower it was: pull the bound toward beta.
+        if p::fh_blend() != 0
+            && best_score >= beta
+            && best_score.abs() < TB_WIN_IN_MAX
+            && beta.abs() < TB_WIN_IN_MAX
+            && alpha.abs() < TB_WIN_IN_MAX
+        {
+            best_score = (best_score * depth + beta) / (depth + 1);
         }
 
         // Failing low here means the opponent's quiet move that led here was good for them.

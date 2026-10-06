@@ -89,4 +89,10 @@ tunables! {
     pawn_hist: 0, 0, 1;           // quiet history per pawn structure
     threat_order: 0, 0, 300;      // order quiets that rescue a piece attacked by a cheaper one first (% of base values)
     check_order: 0, 0, 65536;     // ordering bonus for a quiet move that gives check and does not lose material
+    fh_blend: 0, 0, 1;            // blend a fail-high score toward beta by depth
+    lmr_cutoff: 0, 0, 1;          // reduce one more ply when the children keep failing high (cutoff count > 2)
+    lmr_capt: 0, 0, 32768;        // captures: reduce by capture history / this (0 = off)
+    se_neg: 0, 0, 1;              // stronger negative singular extensions (-2 for table score >= beta, -2 at cut nodes)
+    fut_hist: 0, 0, 32768;        // futility/LMP/SEE pruning depth also counts quiet history / this (0 = off)
+    improving_v2: 0, 0, 1;        // "improving" falls back to four plies back when two plies back was in check
 }
