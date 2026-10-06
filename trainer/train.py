@@ -171,9 +171,14 @@ def decode(batch):
 
 
 class Net(nn.Module):
-    """(768 x input buckets -> H) x 2 -> output buckets, squared clipped ReLU."""
+    """(768 x input buckets -> H) x 2 -> output buckets, squared clipped ReLU.
 
-    def __init__(self, hidden):
+    With `factorize`, every king bucket's weights are the sum of its own and a
+    shared 768-feature table, so what a piece on a square means is learned
+    once for all buckets; export merges the two (the engine format is unchanged).
+    """
+
+    def __init__(self, hidden, factorize=False):
         super().__init__()
         self.hidden = hidden
         bound = 1.0 / math.sqrt(768)
@@ -181,11 +186,27 @@ class Net(nn.Module):
         nn.init.uniform_(self.ft.weight, -bound, bound)
         self.ft_bias = nn.Parameter(torch.empty(hidden).uniform_(-bound, bound))
         self.out = nn.Linear(2 * hidden, LAYOUT["output_buckets"])
+        self.factor = None
+        if factorize and LAYOUT["input_buckets"] > 1:
+            self.factor = nn.EmbeddingBag(768, hidden, mode="sum")
+            nn.init.zeros_(self.factor.weight)
+
+    def accumulate(self, idx, offsets):
+        a = self.ft(idx, offsets)
+        if self.factor is not None:
+            a = a + self.factor(torch.remainder(idx, 768), offsets)
+        return a + self.ft_bias
 
     def forward(self, stm, nstm, offsets, bucket):
-        a = torch.clamp(self.ft(stm, offsets) + self.ft_bias, 0.0, 1.0).pow(2)
-        b = torch.clamp(self.ft(nstm, offsets) + self.ft_bias, 0.0, 1.0).pow(2)
+        a = torch.clamp(self.accumulate(stm, offsets), 0.0, 1.0).pow(2)
+        b = torch.clamp(self.accumulate(nstm, offsets), 0.0, 1.0).pow(2)
         return self.out(torch.cat([a, b], dim=1)).gather(1, bucket.unsqueeze(1)).squeeze(1)
+
+    def merged_ft_weight(self):
+        w = self.ft.weight
+        if self.factor is not None:
+            w = w + self.factor.weight.repeat(LAYOUT["input_buckets"], 1)
+        return w
 
 
 def to_inputs(dec, device):
@@ -197,7 +218,7 @@ def to_inputs(dec, device):
 def export(net, path):
     """Quantise and write the network: version 1 when unbucketed, else version 2."""
     q16 = lambda x, s: (x.detach().cpu() * s).round().clamp(-32768, 32767).to(torch.int16).numpy().astype("<i2")
-    ftw = q16(net.ft.weight, QA)
+    ftw = q16(net.merged_ft_weight(), QA)
     ftb = q16(net.ft_bias, QA)
     ow = q16(net.out.weight, QB)
     ob = (net.out.bias.detach().cpu() * QA * QB).round().to(torch.int64).numpy().astype("<i4")
@@ -215,6 +236,35 @@ def export(net, path):
         f.write(ob.tobytes())
 
 
+def load_nnue_into(net, path):
+    """Dequantise an engine network (same layout) into `net` as a starting point."""
+    b = open(path, "rb").read()
+    if b[:4] != b"APNN":
+        sys.exit(f"{path}: not an ArhanPassant network")
+    version, hidden = struct.unpack("<II", b[4:12])
+    off = 12
+    ib, obk = 1, 1
+    if version == 2:
+        ib, obk, _flags = struct.unpack("<III", b[12:24])
+        off = 24 + 64
+    if hidden != net.hidden or ib != LAYOUT["input_buckets"] or obk != LAYOUT["output_buckets"]:
+        sys.exit(f"{path}: layout {hidden}/{ib}/{obk} does not match this run")
+    def take(n, dtype):
+        nonlocal off
+        a = np.frombuffer(b, dtype=dtype, count=n, offset=off)
+        off += a.nbytes
+        return torch.from_numpy(a.astype(np.float32))
+    with torch.no_grad():
+        net.ft.weight.copy_(take(ib * 768 * hidden, "<i2").reshape(ib * 768, hidden) / QA)
+        net.ft_bias.copy_(take(hidden, "<i2") / QA)
+        net.out.weight.copy_(take(obk * 2 * hidden, "<i2").reshape(obk, 2 * hidden) / QB)
+        net.out.bias.copy_(take(obk, "<i4") / (QA * QB))
+        if net.factor is not None:
+            net.factor.weight.zero_()
+    if off != len(b):
+        sys.exit(f"{path}: size mismatch")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", nargs="+", required=True)
@@ -227,6 +277,9 @@ def main():
     ap.add_argument("--init-checkpoint", help="initial PyTorch state dict; requires --init-network")
     ap.add_argument("--init-network", help="NNUE which the initialization checkpoint must reproduce byte for byte")
     ap.add_argument("--wdl", type=float, default=0.3, help="weight of the game result in the target")
+    ap.add_argument("--factorize", action="store_true", help="shared piece-square table added to every king bucket")
+    ap.add_argument("--init-nnue", help="start from this engine network (dequantised)")
+    ap.add_argument("--power", type=float, default=2.0, help="loss exponent |prediction - target|^power")
     ap.add_argument("--val-every", type=int, default=100, help="hold out every N-th block for validation")
     ap.add_argument("--max-positions", type=int, default=0)
     ap.add_argument("--out", required=True)
@@ -264,7 +317,10 @@ def main():
         sys.exit("not enough training and validation data for one batch")
     print(f"hidden {args.hidden}, input buckets {args.input_buckets}, output buckets {args.output_buckets}, device {device}", flush=True)
 
-    net = Net(args.hidden)
+    net = Net(args.hidden, factorize=args.factorize)
+    if args.init_nnue:
+        load_nnue_into(net, args.init_nnue)
+        print(f"initialised from {args.init_nnue}", flush=True)
     initialization = None
     if args.init_checkpoint:
         initialization = initialize.restore(net, args.init_checkpoint, args.init_network, args.out, export)
@@ -284,7 +340,9 @@ def main():
     def loss_of(inputs, score, result):
         pred = torch.sigmoid(net(*inputs))
         target = (1 - args.wdl) * torch.sigmoid(score / SCALE) + args.wdl * result
-        return torch.mean((pred - target) ** 2)
+        if args.power == 2.0:
+            return torch.mean((pred - target) ** 2)
+        return torch.mean(torch.abs(pred - target) ** args.power)
 
     def validate():
         net.eval()
