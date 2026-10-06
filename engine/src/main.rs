@@ -45,12 +45,34 @@ fn main() {
                 None => Network::embedded().map(Arc::new),
             };
             let hours: f64 = flag(&args, "--hours").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            // `--book FILE`: one FEN (or EPD: first four fields) per line to start games from.
+            let book = flag(&args, "--book").map(|path| {
+                let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                    eprintln!("{path}: {e}");
+                    std::process::exit(2)
+                });
+                let fens: Vec<String> = text
+                    .lines()
+                    .filter_map(|l| {
+                        let f: Vec<&str> = l.split_whitespace().take(6).collect();
+                        let fen = if f.len() >= 6 && f[4].parse::<u32>().is_ok() { f.join(" ") } else if f.len() >= 4 { format!("{} 0 1", f[..4].join(" ")) } else { return None };
+                        Position::from_fen(&fen).ok().map(|_| fen)
+                    })
+                    .collect();
+                if fens.is_empty() {
+                    eprintln!("{path}: no usable positions");
+                    std::process::exit(2);
+                }
+                eprintln!("datagen book: {} positions", fens.len());
+                Arc::new(fens)
+            });
             let cfg = datagen::Config {
                 threads: num("--threads", 1).clamp(1, 512) as usize,
                 games: num("--games", 0),
                 soft_nodes: num("--nodes", 5000),
                 hard_nodes: num("--hard-nodes", 100_000),
                 random_plies: num("--random-plies", 8) as usize,
+                book,
                 out_dir: PathBuf::from(flag(&args, "--out").unwrap_or_else(|| "data".into())),
                 seed: num("--seed", 1),
                 hash_mb: num("--hash", 16) as usize,

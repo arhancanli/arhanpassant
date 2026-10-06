@@ -28,6 +28,9 @@ pub struct Config {
     pub soft_nodes: u64,
     pub hard_nodes: u64,
     pub random_plies: usize,
+    /// Starting positions (FEN) to play from instead of the initial position;
+    /// `random_plies` random moves are still played from each, for variety.
+    pub book: Option<Arc<Vec<String>>>,
     pub out_dir: PathBuf,
     pub seed: u64,
     pub hash_mb: usize,
@@ -122,7 +125,10 @@ fn is_threefold(hashes: &[u64], halfmove: usize) -> bool {
 /// Play one self-play game; returns the recorded positions or None when the
 /// random opening was unusable.
 fn play_game(s: &mut Searcher, rng: &mut Rng, cfg: &Config) -> Option<Vec<[u8; RECORD_SIZE]>> {
-    let mut pos = Position::startpos();
+    let mut pos = match &cfg.book {
+        Some(book) if !book.is_empty() => Position::from_fen(&book[(rng.next() % book.len() as u64) as usize]).ok()?,
+        _ => Position::startpos(),
+    };
     let mut hashes = vec![pos.hash()];
     let plies = cfg.random_plies + (rng.next() % 2) as usize;
     for _ in 0..plies {
@@ -395,7 +401,7 @@ mod tests {
 
     fn test_config(name: &str) -> Config {
         Config {
-            threads: 1, games: 2, soft_nodes: 32, hard_nodes: 64, random_plies: 0,
+            threads: 1, games: 2, soft_nodes: 32, hard_nodes: 64, random_plies: 0, book: None,
             out_dir: std::env::temp_dir().join(format!("ap-datagen-{name}-{}", std::process::id())),
             seed: 23, hash_mb: 1, positions_per_file: 1, network: None, duration: None,
         }
