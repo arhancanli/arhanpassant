@@ -36,6 +36,7 @@ class SearchResourceCheckpointTests(unittest.TestCase):
             local_gate.save(cmd[cmd.index('--out') + 1], {'seed': int(cmd[cmd.index('--seed') + 1]),
                 'games': 4, 'wins': 1, 'losses': 1, 'draws': 2, 'penta': [0, 1, 0, 1, 0],
                 'seconds': 1, 'reasons': {'adjudicated': 4}})
+            pathlib.Path(cmd[cmd.index('--games-out') + 1]).write_text('{}\n' * 4)
             return 0
         with patch.object(local_gate, 'run', batch):
             local_gate.gate(engine=self.args.engine, arena=self.args.arena,
@@ -86,6 +87,7 @@ class SearchResourceCheckpointTests(unittest.TestCase):
             local_gate.save(cmd[cmd.index('--out') + 1], {'seed': int(cmd[cmd.index('--seed') + 1]),
                 'games': 4, 'wins': 1, 'losses': 1, 'draws': 2, 'penta': [0, 1, 0, 1, 0],
                 'seconds': 1, 'reasons': {'adjudicated': 4}})
+            pathlib.Path(cmd[cmd.index('--games-out') + 1]).write_text('{}\n' * 4)
             return 0
         argv = ['loop.py', '--data', str(self.root), '--engine', self.args.engine,
             '--arena', self.args.arena, '--book', self.args.book, '--cpu-budget', '4',

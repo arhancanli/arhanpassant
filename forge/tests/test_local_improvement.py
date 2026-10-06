@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import local_gate
+import batch_attempts
 import loop
 import macbook
 
@@ -36,6 +37,7 @@ class GateTests(unittest.TestCase):
         seed = int(cmd[cmd.index("--seed") + 1])
         self.seeds.append(seed)
         self.batch(cmd[cmd.index("--out") + 1], seed)
+        pathlib.Path(cmd[cmd.index("--games-out") + 1]).write_text("{}\n" * 4)
         return 0
 
     def batch(self, path, seed, config=None):
@@ -106,6 +108,58 @@ class GateTests(unittest.TestCase):
         with patch.object(local_gate, "run", switched):
             result = local_gate.gate(**{**self.kw, "engine": str(link)})
         self.assertEqual(result["games"], 4)
+
+    def test_search_forfeit_keeps_summary_and_game_records_before_retry(self):
+        def failed(cmd, logfile):
+            self.arena(cmd, logfile)
+            path = cmd[cmd.index("--out") + 1]
+            batch = json.loads(pathlib.Path(path).read_text())
+            batch["reasons"] = {"loses on time": 1, "adjudicated": 3}
+            local_gate.save(path, batch)
+            pathlib.Path(cmd[cmd.index("--games-out") + 1]).write_text('{"white":"candidate","black":"champion","result":"0-1","reason":"loses on time"}\n')
+            return 0
+        with patch.object(local_gate, "run", failed), self.assertRaisesRegex(ValueError, "unreliable"):
+            local_gate.gate(**self.kw)
+        saved = json.loads(pathlib.Path(self.kw["out"]).read_text())
+        self.assertEqual(saved["games"], 0)
+        folder = pathlib.Path(self.kw["out"] + ".batch-attempts") / str(saved["seed"])
+        journal = batch_attempts.read(folder / "journal.json")
+        raw = folder / "attempts/0001/gate.json.batch.games.jsonl"
+        self.assertEqual(json.loads(raw.read_text())["white"], "candidate")
+        for f in journal["attempts"][0]["files"]:
+            self.assertEqual(local_gate.digest(f["file"]), f["sha256"])
+        with patch.object(local_gate, "run", self.arena):
+            clean = local_gate.gate(**self.kw)
+        self.assertEqual(clean["games"], 4)
+        self.assertEqual([a["status"] for a in batch_attempts.read(folder / "journal.json")["attempts"]], ["failed", "passed"])
+
+    def test_search_interruption_and_persistent_retry_limit_do_not_advance_checkpoint(self):
+        def interrupted(cmd, logfile):
+            self.arena(cmd, logfile)
+            raise SystemExit("interrupted")
+        for _ in range(batch_attempts.MAX_ATTEMPTS):
+            with patch.object(local_gate, "run", interrupted), self.assertRaises(SystemExit):
+                local_gate.gate(**self.kw)
+        with patch.object(local_gate, "run", side_effect=AssertionError("must not launch")):
+            with self.assertRaises(batch_attempts.RetryLimit):
+                local_gate.gate(**self.kw)
+        self.assertEqual(json.loads(pathlib.Path(self.kw["out"]).read_text())["games"], 0)
+        self.assertEqual(len(list(self.root.glob('gate.json.batch-attempts/*/attempts/*/attempt.json'))), 3)
+
+    def test_wrong_seed_and_missing_records_are_rejected(self):
+        def wrong_seed(cmd, logfile):
+            self.arena(cmd, logfile)
+            self.batch(cmd[cmd.index("--out") + 1], int(cmd[cmd.index("--seed") + 1]) + 1)
+            return 0
+        with patch.object(local_gate, "run", wrong_seed), self.assertRaisesRegex(ValueError, "batch seed"):
+            local_gate.gate(**self.kw)
+        def missing(cmd, logfile):
+            self.arena(cmd, logfile)
+            pathlib.Path(cmd[cmd.index("--games-out") + 1]).write_text("{}\n")
+            return 0
+        with patch.object(local_gate, "run", missing), self.assertRaisesRegex(ValueError, "record count"):
+            local_gate.gate(**self.kw)
+        self.assertEqual(json.loads(pathlib.Path(self.kw["out"]).read_text())["games"], 0)
 
 
 class ControllerTests(unittest.TestCase):
@@ -281,6 +335,46 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(json.loads((self.root / "forge/search.json").read_text())["accepted"], {"cont4": "1"})
         self.assertEqual(len(json.loads((self.root / "forge/tests.json").read_text())["tests"]), 1)
 
+    def test_exhausted_search_keeps_queue_and_reports_attention_without_promotion(self):
+        engine, net = self.root / "engine", self.root / "nets/champion.nnue"
+        engine.write_bytes(b"engine")
+        net.write_bytes(b"network")
+        args = types.SimpleNamespace(data=str(self.root), engine=str(engine), arena="arena", book="book",
+                                     concurrency=18, cpu_budget=18, max_games=12000, tc="8+0.08",
+                                     batch_games=64, no_publish=True)
+        state = {"champion_net": str(net), "selfplay_threads": 0}
+        queue = {"pending": [{"name": "hist-prune", "change": "history", "opts": {"hist_prune": "3000"}}], "done": []}
+        loop.save_json(str(self.root / "forge/queue.json"), queue)
+        with patch.object(local_gate, "gate", side_effect=batch_attempts.RetryLimit("failed/journal.json")):
+            with patch.object(loop, "log") as log:
+                loop.search_batch(args, state, "log")
+                loop.search_batch(args, state, "log")
+        log.assert_called_once()
+        self.assertEqual(state["search_retry_failure"]["test"], "hist-prune")
+        self.assertEqual(json.loads((self.root / "forge/queue.json").read_text()), queue)
+        self.assertFalse((self.root / "forge/tests.json").exists())
+
+    def test_controller_polls_instead_of_spinning_when_only_exhausted_search_remains(self):
+        engine, net = self.root / "engine", self.root / "nets/champion.nnue"
+        engine.write_bytes(b"engine")
+        net.write_bytes(b"network")
+        loop.save_json(str(self.root / "forge/state.json"), {
+            "generation": 1, "champion_net": str(net), "champion_version": "0.12.0",
+            "trained_on": 0, "attempts": 0, "sizes": {}})
+        loop.save_json(str(self.root / "forge/queue.json"), {
+            "pending": [{"name": "hist-prune", "change": "history", "opts": {"hist_prune": "3000"}}]})
+        argv = ["loop.py", "--data", str(self.root), "--engine", str(engine), "--arena", "arena",
+                "--book", "book", "--cpu-budget", "18", "--local-search", "--min-free-gb", "0"]
+        with patch.object(sys, "argv", argv), patch.object(loop.signal, "signal"), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(loop, "ensure_selfplay"), patch.object(loop, "stop_selfplay"):
+                with patch.object(local_gate, "gate", side_effect=batch_attempts.RetryLimit("failed/journal.json")) as gate:
+                    with patch.object(loop.time, "sleep", side_effect=SystemExit(0)) as sleep:
+                        with self.assertRaises(SystemExit):
+                            loop.main()
+        gate.assert_called_once()
+        sleep.assert_called_once_with(60)
+        self.assertEqual(loop.load_json(str(self.root / "forge/state.json"), {})["search_retry_failure"]["test"], "hist-prune")
+
     def test_service_replacement_retries_the_launchd_unload_race(self):
         busy = types.SimpleNamespace(returncode=5, stderr="Input/output error", stdout="")
         ready = types.SimpleNamespace(returncode=0, stderr="", stdout="")
@@ -387,6 +481,7 @@ class ControllerTests(unittest.TestCase):
                                      max_games=12, batch_games=4)
         _, _, _, out = loop.search_evidence(args, state, item)
         def arena_batch(cmd, logfile):
+            pathlib.Path(cmd[cmd.index("--games-out") + 1]).write_text("{}\n" * 4)
             local_gate.save(cmd[cmd.index("--out") + 1], {
                 "seed": int(cmd[cmd.index("--seed") + 1]), "games": 4, "wins": 1, "losses": 1,
                 "draws": 2, "penta": [0, 1, 0, 1, 0], "seconds": 1, "reasons": {"adjudicated": 4}})

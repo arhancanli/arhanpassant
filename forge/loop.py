@@ -26,6 +26,7 @@ import sys
 import time
 
 import local_gate
+import batch_attempts
 import milestones
 import diagnostics
 import publish_data
@@ -373,12 +374,20 @@ def search_batch(args, state, logfile):
             if saved > workers:
                 raise RuntimeError(f"saved search gate needs {saved} workers, only {workers} available; reduce generation first")
             workers = saved
-        result = local_gate.gate(engine=engine, baseline_engine=baseline, arena=args.arena,
-                                 candidate=state["champion_net"], champion=state["champion_net"],
-                                 book=args.book, tc=args.tc, concurrency=max(1, workers),
-                                 max_games=args.max_games, elo0=elo0, elo1=elo1,
-                                 cand_opts={**base, **item["opts"]}, champ_opts=base,
-                                 out=out, logfile=logfile, log=log, batch_games=args.batch_games, max_batches=1)
+        try:
+            result = local_gate.gate(engine=engine, baseline_engine=baseline, arena=args.arena,
+                                     candidate=state["champion_net"], champion=state["champion_net"],
+                                     book=args.book, tc=args.tc, concurrency=max(1, workers),
+                                     max_games=args.max_games, elo0=elo0, elo1=elo1,
+                                     cand_opts={**base, **item["opts"]}, champ_opts=base,
+                                     out=out, logfile=logfile, log=log, batch_games=args.batch_games, max_batches=1)
+        except batch_attempts.RetryLimit as error:
+            failure = {"test": item["name"], "evidence": out, "journal": error.journal_path}
+            if state.get("search_retry_failure") != failure:
+                log(f"search test {item['name']} needs investigation: {error}")
+            state["search_retry_failure"] = failure
+            return
+    state.pop("search_retry_failure", None)
     if result["decision"] == "running":
         return
     entry = {"date": dt.date.today().strftime("%Y%m%d"), "name": item["name"], "change": item["change"],
@@ -599,6 +608,9 @@ def run_controller(args, forge_dir):
                         log(f"training ready; finishing existing search test {state['training_deferred_for']} first")
                     if testing:
                         search_batch(args, state, logfile)
+                        if state.get("search_retry_failure"):
+                            state["phase"] = "search test needs attention"
+                            save_json(state_path, state)
                     analysed = (review and diagnostics.advance(
                         args, state, gate_workers(args, state), logfile, log))
                     if external and not analysed:
@@ -609,7 +621,7 @@ def run_controller(args, forge_dir):
                         save_json(state_path, state)
                     if args.once:
                         return
-                    if not testing and not external and not analysed:
+                    if not external and not analysed and (not testing or state.get("search_retry_failure")):
                         time.sleep(args.poll_seconds)
                     continue
 

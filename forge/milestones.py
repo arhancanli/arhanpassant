@@ -13,35 +13,15 @@ import os
 import pathlib
 import shutil
 
+import batch_attempts
 import local_gate
 import opponents
 
 
 PLAN = [("10+0.1", 200), ("60+0.6", 100)]
 BATCH_GAMES = 32
-MAX_BATCH_ATTEMPTS = 3
-
-
-class RetryLimit(RuntimeError):
-    """An external batch needs investigation before any more games are run."""
-
-
-def archive_attempt(batch_out, games_out, journal_path, journal, error):
-    """Keep rejected or interrupted outputs before their paths can be reused."""
-    attempt = journal["attempts"][-1]
-    archive = batch_out.parent / (batch_out.stem + "-attempts") / f"{len(journal['attempts']):04d}"
-    archive.mkdir(parents=True, exist_ok=True)
-    files = []
-    for source in (batch_out, games_out, pathlib.Path(str(batch_out) + ".tmp")):
-        if source.exists():
-            digest = local_gate.digest(source)
-            target = archive / source.name
-            freeze(source, target, digest)
-            files.append({"file": str(target), "sha256": digest, "bytes": source.stat().st_size})
-    attempt.update(status="failed", error=str(error), files=files,
-                   finished=dt.datetime.now(dt.timezone.utc).isoformat())
-    local_gate.save(str(archive / "attempt.json"), attempt)
-    local_gate.save(str(journal_path), journal)
+MAX_BATCH_ATTEMPTS = batch_attempts.MAX_ATTEMPTS
+RetryLimit = batch_attempts.RetryLimit
 
 
 def exhausted(directory, match):
@@ -190,24 +170,9 @@ def advance_match(manifest, match, directory, concurrency, logfile):
         journal_path = batches / f"{number:04d}.attempts.json"
         identity = {"milestone_match": match_id, "seed": seed, "games": count,
                     "max_attempts": MAX_BATCH_ATTEMPTS}
-        journal = read(journal_path, {**identity, "attempts": []})
-        if any(journal.get(k) != v for k, v in identity.items()):
-            raise ValueError("milestone attempt journal does not match this batch")
-        if journal["attempts"] and journal["attempts"][-1]["status"] == "running":
-            archive_attempt(batch_out, games_out, journal_path, journal, "interrupted unsealed arena attempt")
-        elif not journal["attempts"] and any(p.exists() for p in (batch_out, games_out)):
-            # Older controllers left no launch journal. Preserve their outputs
-            # as one unknown attempt; do not silently attribute them to this run.
-            journal["attempts"].append({"status": "running", "command": None, "legacy": True})
-            archive_attempt(batch_out, games_out, journal_path, journal, "unsealed legacy arena outputs")
-        if len(journal["attempts"]) >= MAX_BATCH_ATTEMPTS:
-            raise RetryLimit(f"external batch exhausted {MAX_BATCH_ATTEMPTS} attempts; inspect {journal_path}")
-        journal["attempts"].append({"status": "running", "command": cmd,
-                                    "started": dt.datetime.now(dt.timezone.utc).isoformat()})
-        local_gate.save(str(journal_path), journal)
-        # The journal and any previous failure archive are durable first.
-        for stale in (batch_out, games_out, pathlib.Path(str(batch_out) + ".tmp")):
-            stale.unlink(missing_ok=True)
+        outputs = (batch_out, games_out, pathlib.Path(str(batch_out) + ".tmp"))
+        archive = batches / (batch_out.stem + "-attempts")
+        journal = batch_attempts.begin(journal_path, identity, cmd, outputs, archive)
         try:
             if local_gate.run(cmd, logfile) != 0:
                 raise RuntimeError("external arena failed; completed batches retained")
@@ -223,10 +188,9 @@ def advance_match(manifest, match, directory, concurrency, logfile):
                          records_sha256=local_gate.digest(games_out))
             local_gate.save(str(batch_out), batch)
         except Exception as error:
-            archive_attempt(batch_out, games_out, journal_path, journal, error)
+            batch_attempts.failed(journal_path, journal, outputs, archive, error)
             raise
-        journal["attempts"][-1].update(status="passed", finished=dt.datetime.now(dt.timezone.utc).isoformat())
-        local_gate.save(str(journal_path), journal)
+        batch_attempts.passed(journal_path, journal)
     unchanged()
     local_gate.validate_batch(batch, count)
     if local_gate.digest(games_out) != batch["records_sha256"]:

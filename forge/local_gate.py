@@ -8,11 +8,13 @@ still match. Both sides play on the same machine with colours swapped.
 import hashlib
 import json
 import os
+import pathlib
 import signal
 import subprocess
 import time
 
 import sprt
+import batch_attempts
 
 
 def save(path, value):
@@ -146,13 +148,14 @@ def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games
         if count < 2 or count % 2:
             raise ValueError("gate budgets must contain complete game pairs")
         batch_out = out + ".batch.json"
+        games_out = out + ".batch.games.jsonl"
         seed = result["seed"] + result["batches"]
         cmd = [arena, "--engine", "name=candidate", f"cmd={engine}",
                f"opt.EvalFile={candidate or '<none>'}", *[f"opt.{k}={v}" for k, v in cand_opts.items()],
                "--engine", "name=champion", f"cmd={baseline_engine}",
                f"opt.EvalFile={champion or '<none>'}", *[f"opt.{k}={v}" for k, v in champ_opts.items()],
                "--tc", tc, "--book", book, "--concurrency", str(concurrency), "--games", str(count),
-               "--seed", str(seed), "--nice", "10", "--quiet", "--out", batch_out]
+               "--seed", str(seed), "--nice", "10", "--quiet", "--out", batch_out, "--games-out", games_out]
         # A complete batch left by an interrupted controller is recoverable.
         # Validate its seed before using it to prevent double counting.
         batch = None
@@ -165,17 +168,31 @@ def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games
             except json.JSONDecodeError:
                 pass
         if batch is None:
-            if os.path.exists(batch_out):
-                os.remove(batch_out)
-            if run(cmd, logfile) != 0:
-                raise RuntimeError("local arena failed; completed batches are saved")
-            unchanged()
-            with open(batch_out) as f:
-                batch = json.load(f)
-            validate_batch(batch, count)
-            batch["gate_config"] = config
-            save(batch_out, batch)
+            journal_path = pathlib.Path(out + ".batch-attempts") / str(seed) / "journal.json"
+            outputs = (batch_out, games_out, batch_out + ".tmp")
+            journal = batch_attempts.begin(journal_path, {"gate_config": config, "seed": seed, "games": count},
+                                           cmd, outputs, journal_path.parent / "attempts")
+            try:
+                if run(cmd, logfile) != 0:
+                    raise RuntimeError("local arena failed; completed batches are saved")
+                unchanged()
+                with open(batch_out) as f:
+                    batch = json.load(f)
+                validate_batch(batch, count)
+                if batch.get("seed") != seed:
+                    raise ValueError("unexpected local gate batch seed")
+                records = [json.loads(line) for line in pathlib.Path(games_out).read_text().splitlines()]
+                if len(records) != count:
+                    raise ValueError("local gate record count differs from completed games")
+                batch.update(gate_config=config, records_sha256=digest(games_out))
+                save(batch_out, batch)
+            except Exception as error:
+                batch_attempts.failed(journal_path, journal, outputs, journal_path.parent / "attempts", error)
+                raise
+            batch_attempts.passed(journal_path, journal)
         validate_batch(batch, count)
+        if batch.get("records_sha256") and digest(games_out) != batch["records_sha256"]:
+            raise ValueError("local gate game records changed; cannot recover this batch")
         for k in ("games", "wins", "losses", "draws", "seconds"):
             result[k] += batch[k]
         result["penta"] = [a + b for a, b in zip(result["penta"], batch["penta"])]
@@ -185,6 +202,7 @@ def gate(*, engine, arena, candidate, champion, book, tc, concurrency, max_games
         summarize(result)
         save(out, result)
         os.remove(batch_out)
+        pathlib.Path(games_out).unlink(missing_ok=True)
         completed += 1
         log(f"local gate: {result['games']} games, elo {result['elo']:+.1f} "
             f"[{result['elo_lo']:+.1f}, {result['elo_hi']:+.1f}], "

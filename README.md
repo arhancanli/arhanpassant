@@ -180,6 +180,13 @@ running. If only exhausted batches remain, the suite reports `needs_attention`
 and stops scheduling games until the cause is investigated. Failed attempts
 never enter the accepted game counts or score intervals.
 
+Local SPRT batches use the same three-attempt rule and now write game records
+so a failed game's losing side can be inspected. Their archives are under
+`GATE.json.batch-attempts/SEED/`. An exhausted search gate keeps its original
+checkpoint and queue entry and reports `search_retry_failure` in service status;
+external matches continue. Resolve the recorded cause before allowing more
+attempts. Accepted temporary records are removed after their aggregate commits.
+
 Analyse saved losses with `forge/blunders.py` using the dependencies in
 `forge/requirements-analysis.txt`. It compares Stockfish's preferred move
 with the played move from the same position, at equal node limits and with
