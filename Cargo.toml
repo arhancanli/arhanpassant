@@ -20,3 +20,8 @@ panic = "abort"
 [profile.profiling]
 inherits = "release"
 debug = true
+
+# pyrrhic-rs 0.2.0 assumes C `char` is signed (true on macOS and x86, not on
+# ARM Linux); the vendored copy casts at the six places it meets std's CStr.
+[patch.crates-io]
+pyrrhic-rs = { path = "vendor/pyrrhic-rs" }

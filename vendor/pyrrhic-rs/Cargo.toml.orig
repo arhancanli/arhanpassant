@@ -1,0 +1,25 @@
+[workspace]
+members = []
+[package]
+name = "pyrrhic-rs"
+authors = ["Algorhythm"]
+version = "0.2.0"
+edition = "2021"
+autobins = false
+license = "MIT"
+description = "A pure-Rust library to probe Syzygy Tablebases within a chess engine"
+repository = "https://github.com/Algorhythm-sxv/pyrrhic-rs"
+readme = "README.md"
+keywords = ["chess", "tablebase", "syzygy"]
+categories = ["game-development"]
+
+[lib]
+name = "pyrrhic_rs"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+libc = "0.2"
+memmap2 = "0.9.4"
+
+[dev-dependencies]
+cozy-chess = "0.3.3"
