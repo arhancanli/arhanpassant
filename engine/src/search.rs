@@ -773,8 +773,22 @@ impl Searcher {
                     if !see_ge(pos, m, -p::see_quiet() * lmr_depth) {
                         continue;
                     }
-                } else if depth <= 8 && !see_ge(pos, m, -p::see_noisy() * depth * depth) {
-                    continue;
+                } else {
+                    let victim = pos.captured(m).unwrap_or(PieceType::Pawn);
+                    let capt_hist = self.history.capture_score(piece, m.to(), victim);
+                    // Capture futility: even winning the piece leaves the score below alpha.
+                    if p::cap_fut() != 0
+                        && !in_check
+                        && lmr_depth < 7
+                        && m.promotion().is_none()
+                        && static_eval + p::cap_fut() + 200 * lmr_depth + see_value(victim) * p::see_eval() / 100 + capt_hist / 64 <= alpha
+                    {
+                        continue;
+                    }
+                    let slack = if p::see_capt_hist() != 0 { capt_hist / p::see_capt_hist() } else { 0 };
+                    if depth <= 8 && !see_ge(pos, m, -p::see_noisy() * depth * depth - slack) {
+                        continue;
+                    }
                 }
             }
 

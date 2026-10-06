@@ -109,4 +109,6 @@ tunables! {
     upcoming_rep: 0, 0, 1;        // a side that can force a repetition scores at least a draw (cuckoo tables)
     tt_cut_node: 0, 0, 1;         // table cutoffs at depth <= 5 only where the node type agrees with the bound
     nmp_cutnode: 0, 0, 1;         // null-move pruning only at expected cut nodes
+    cap_fut: 0, 0, 800;           // capture futility base margin at reduced depth < 7 (0 = off)
+    see_capt_hist: 0, 0, 512;     // capture SEE pruning threshold loosened by capture history / this (0 = off)
 }
