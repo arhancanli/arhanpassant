@@ -124,4 +124,6 @@ tunables! {
     se_limit: 0, 0, 1;            // singular extensions only below twice the root depth in plies
     qs_fh_blend: 0, 0, 1;         // quiescence fail-highs return the midpoint of the score and beta
     iir_all: 0, 0, 1;             // internal iterative reduction at every node type, not only PV and expected cut nodes
+    low_ply: 0, 0, 256;           // quiet ordering: history of moves at the first four plies of this search, weight in 16ths (0 = off)
+    dext_limit: 0, 0, 16;         // at most this many double or triple extensions on the path from the root (0 = no limit)
 }

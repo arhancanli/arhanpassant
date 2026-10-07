@@ -207,7 +207,7 @@ impl MovePicker {
                     let (threat_scale, check_bonus) = (p::threat_order(), p::check_order());
                     self.fill(pos, kind::QUIET, |m| {
                         let piece = pos.moved_piece(m);
-                        let mut score = hist.quiet_score(&ctx, piece, m);
+                        let mut score = hist.quiet_score(&ctx, piece, m) + hist.low_ply_score(&ctx, m);
                         if let Some(o) = &order {
                             let pt = piece.piece_type();
                             if threat_scale != 0 {

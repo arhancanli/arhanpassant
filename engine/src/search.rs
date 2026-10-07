@@ -95,6 +95,8 @@ struct StackEntry {
     cutoff_cnt: u32,
     /// Reduction this node applied to the child it is searching (0 outside reduced searches).
     reduction: i32,
+    /// Double (or triple) extensions on the path from the root to this node.
+    dexts: i32,
 }
 
 pub struct SearchResult {
@@ -469,6 +471,7 @@ impl Searcher {
             c1,
             c2,
             c4: self.cont4_key(ply),
+            ply: ply.min(u8::MAX as usize - 1) as u8,
         }
     }
 
@@ -501,6 +504,10 @@ impl Searcher {
             self.seldepth = ply;
         }
         self.stack[ply + 2].cutoff_cnt = 0;
+        if root {
+            self.stack[0].dexts = 0;
+        }
+        self.stack[ply + 1].dexts = self.stack[ply].dexts;
         if !root {
             if self.is_draw(pos, ply) {
                 return self.draw_score();
@@ -851,6 +858,11 @@ impl Searcher {
                 }
             }
 
+            // Cap stacked double extensions so a long forcing line cannot blow up the tree.
+            if ext >= 2 && p::dext_limit() != 0 && self.stack[ply].dexts >= p::dext_limit() {
+                ext = 1;
+            }
+            self.stack[ply + 1].dexts = self.stack[ply].dexts + (ext >= 2) as i32;
             let child = pos.after(m);
             self.stack[ply].current = m;
             self.stack[ply].cont = ContKey { piece: piece.0, to: m.to() };
@@ -1268,6 +1280,7 @@ impl Searcher {
         self.nodes = 0;
         self.flushed_nodes = 0;
         self.seldepth = 0;
+        self.history.new_search();
         self.root_best = (Move::NULL, -INF);
         self.hard_nodes = limits.nodes;
         self.hashes.clear();

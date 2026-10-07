@@ -7,6 +7,8 @@ pub const HIST_MAX: i32 = 16384;
 
 /// Pawn-structure history entries (indexed by a hash of both sides' pawns).
 pub const PAWN_HIST_SIZE: usize = 512;
+/// Plies from the root that keep their own quiet history (`low_ply`).
+pub const LOW_PLY: usize = 4;
 
 /// What every quiet-move history lookup at one node shares.
 #[derive(Copy, Clone, Debug)]
@@ -19,11 +21,13 @@ pub struct QuietCtx {
     pub c1: ContKey,
     pub c2: ContKey,
     pub c4: ContKey,
+    /// Distance from the root (`u8::MAX` where low-ply history does not apply).
+    pub ply: u8,
 }
 
 impl QuietCtx {
     pub const fn new(stm: Color, c1: ContKey, c2: ContKey) -> QuietCtx {
-        QuietCtx { stm, threats: 0, pawn: 0, c1, c2, c4: ContKey::NONE }
+        QuietCtx { stm, threats: 0, pawn: 0, c1, c2, c4: ContKey::NONE, ply: u8::MAX }
     }
 }
 
@@ -70,6 +74,8 @@ pub struct History {
     pub corr_cont: Vec<[i16; 13 * 64]>,
     /// [side to move][key of both sides' knights and bishops (and kings)]
     pub corr_minor: Vec<[i16; CORR_SIZE]>,
+    /// [ply from the root][from][to], reset at the start of every search (`low_ply`)
+    pub low_ply: [[[i16; 64]; 64]; LOW_PLY],
 }
 
 #[inline(always)]
@@ -91,6 +97,7 @@ impl History {
             corr_np: vec![[0; CORR_SIZE]; 4],
             corr_cont: vec![[0; 13 * 64]; 2],
             corr_minor: vec![[0; CORR_SIZE]; 2],
+            low_ply: [[[0; 64]; 64]; LOW_PLY],
         })
     }
 
@@ -110,6 +117,24 @@ impl History {
         for c in self.corr_cont.iter_mut() {
             *c = [0; 13 * 64];
         }
+        self.low_ply = [[[0; 64]; 64]; LOW_PLY];
+    }
+
+    /// Low-ply history describes the current root only.
+    pub fn new_search(&mut self) {
+        if p::low_ply() != 0 {
+            self.low_ply = [[[0; 64]; 64]; LOW_PLY];
+        }
+    }
+
+    /// Ordering bonus from the low-ply table (zero beyond the first plies or when off).
+    #[inline(always)]
+    pub fn low_ply_score(&self, q: &QuietCtx, m: Move) -> i32 {
+        let w = p::low_ply();
+        if w == 0 || q.ply as usize >= LOW_PLY {
+            return 0;
+        }
+        self.low_ply[q.ply as usize][m.from() as usize][m.to() as usize] as i32 * w / (16 * (1 + q.ply as i32))
     }
 
     #[inline(always)]
@@ -142,6 +167,9 @@ impl History {
     }
 
     pub fn update_quiet(&mut self, q: &QuietCtx, piece: Piece, m: Move, bonus: i32) {
+        if p::low_ply() != 0 && (q.ply as usize) < LOW_PLY {
+            gravity(&mut self.low_ply[q.ply as usize][m.from() as usize][m.to() as usize], bonus);
+        }
         let (ft, tt) = (((q.threats >> m.from()) & 1) as usize, ((q.threats >> m.to()) & 1) as usize);
         gravity(&mut self.butterfly[q.stm.idx()][ft][tt][m.from() as usize][m.to() as usize], bonus);
         if p::pawn_hist() != 0 {
