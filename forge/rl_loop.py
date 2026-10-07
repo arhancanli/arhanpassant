@@ -150,10 +150,11 @@ def restart_fleet():
 
 
 def recipe(state):
-    """Training settings, overridable in state.json ("recipe"). A fine-tune of a
+    """Training settings and the fresh positions a round collects before training
+    ("threshold"), overridable in state.json ("recipe"). A fine-tune of a
     converged network needs a low learning rate: at 1e-4 a fresh optimizer knocks
     it off its optimum and no epoch beats the starting network (round 6, 10-07)."""
-    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 1}
+    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 1, "threshold": THRESHOLD}
     r.update(state.get("recipe", {}))
     return r
 
@@ -250,7 +251,7 @@ def main():
                     log(f"promoted round {rnd}; round {rnd + 1} started")
                     continue
                 r["next_try_at"] = int(r["positions"] * 1.5)
-        elif r["positions"] >= max(THRESHOLD, r.get("next_try_at", 0)):
+        elif r["positions"] >= max(recipe(state)["threshold"], r.get("next_try_at", 0)):
             r["tries"] += 1
             save(state)
             rc = recipe(state)
