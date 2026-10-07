@@ -71,6 +71,15 @@ def set_layout(input_buckets, output_buckets):
 BLOCK = 4096  # records read contiguously; blocks are shuffled, then records within a buffer
 
 
+def data_files(paths):
+    """Record files named directly or found (recursively) in named directories."""
+    files = []
+    for p in paths:
+        p = os.path.expanduser(p)
+        files += sorted(glob.glob(os.path.join(p, "**", "*.bin"), recursive=True)) if os.path.isdir(p) else [p]
+    return files
+
+
 class Dataset:
     """Self-play records memory-mapped from many files, read in shuffled blocks.
 
@@ -81,10 +90,7 @@ class Dataset:
     """
 
     def __init__(self, paths, val_every=100, max_positions=0, file_sizes=None):
-        files = []
-        for p in paths:
-            p = os.path.expanduser(p)
-            files += sorted(glob.glob(os.path.join(p, "**", "*.bin"), recursive=True)) if os.path.isdir(p) else [p]
+        files = data_files(paths)
         if not files:
             sys.exit("no data files found")
         prepare_file_limit(len(files))
@@ -327,6 +333,9 @@ def main():
     ap.add_argument("--workers", type=int, default=4, help="parallel record decoders")
     ap.add_argument("--threads", type=int, default=4, help="PyTorch CPU threads")
     ap.add_argument("--manifest", help="JSON mapping of input files to frozen byte lengths")
+    ap.add_argument("--val-data", nargs="+", help="validate on every record of these files instead of the held-out blocks "
+                    "(a fixed set lets runs on different data be compared; keep these files out of --data)")
+    ap.add_argument("--warmup", type=int, default=0, help="steps of linear learning-rate warm-up before the cosine decay")
     args = ap.parse_args()
     if bool(args.init_checkpoint) != bool(args.init_network):
         ap.error("--init-checkpoint and --init-network must be supplied together")
@@ -355,6 +364,12 @@ def main():
                    args.val_every, args.max_positions, file_sizes)
     if data.n_train < args.batch or data.n_val < args.batch:
         sys.exit("not enough training and validation data for one batch")
+    vdata = data
+    if args.val_data:
+        if set(map(os.path.realpath, data_files(args.val_data))) & set(map(os.path.realpath, data_files(list(file_sizes) if file_sizes is not None else args.data))):
+            sys.exit("--val-data files are also in the training data")
+        print("validation set:", end=" ", flush=True)
+        vdata = Dataset(args.val_data, 1)
     print(f"hidden {args.hidden}, input buckets {args.input_buckets}, output buckets {args.output_buckets}, device {device}", flush=True)
 
     net = Net(args.hidden, factorize=args.factorize)
@@ -375,7 +390,9 @@ def main():
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=0.0)
     steps_per_epoch = -(-data.n_train // args.batch)
     total = steps_per_epoch * args.epochs
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: 0.5 * (1 + math.cos(math.pi * min(s, total) / total)) * 0.99 + 0.01)
+    warm = min(args.warmup, total - 1)
+    sched = torch.optim.lr_scheduler.LambdaLR(
+        opt, lambda s: min(1.0, (s + 1) / (warm + 1)) * (0.5 * (1 + math.cos(math.pi * min(s, total) / total)) * 0.99 + 0.01))
 
     def loss_of(inputs, score, result):
         pred = torch.sigmoid(net(*inputs))
@@ -388,14 +405,14 @@ def main():
         net.eval()
         tot, n = 0.0, 0
         with torch.no_grad():
-            for b, dec in data.batches(data.val_blocks, args.batch, workers=args.workers):
+            for b, dec in vdata.batches(vdata.val_blocks, args.batch, workers=args.workers):
                 value = float(loss_of(*to_inputs(dec, device)))
                 if not math.isfinite(value):
                     raise RuntimeError("nonfinite validation loss")
                 tot += value * b
                 n += b
-        if n != data.n_val:
-            raise RuntimeError(f"validation covered {n} of {data.n_val} frozen records")
+        if n != vdata.n_val:
+            raise RuntimeError(f"validation covered {n} of {vdata.n_val} frozen records")
         net.train()
         return tot / n
 
