@@ -119,7 +119,7 @@ tunables! {
     w_cont2: 64, 0, 160;          //   two-ply continuation
     se_beta_mult: 16, 6, 48;      // singular beta = table score - depth * this / 16
     lmr_ttpv: 0, 0, 2;            // table-PV nodes: reduce one ply less when the table score beats alpha (2: and one more when its depth covers this node)
-    alpha_red: 0, 0, 2;           // after a move raises alpha (no cutoff), search the remaining moves this many plies shallower (depth 3-13)
+    alpha_red: 2, 0, 3;           // after a move raises alpha (no cutoff), search the remaining moves this many plies shallower (depth 3-13; 2: +13.1 Elo, 1: +1.6)
     triple_ext: 0, 0, 200;        // singular tt quiet move failing this far below the double-extension margin extends 3 plies (0 = off)
     se_limit: 0, 0, 1;            // singular extensions only below twice the root depth in plies
     qs_fh_blend: 0, 0, 1;         // quiescence fail-highs return the midpoint of the score and beta
