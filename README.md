@@ -67,7 +67,8 @@ up to 1 TB cleared in parallel, and ARM Linux builds.
   pick the `avx2` build unless the computer is older than about 2013 (then the plain one).
 - **Homebrew** (macOS and Linux): `brew install arhancanli/tap/arhanpassant`
 - **Docker**: `docker run -i --rm ghcr.io/arhancanli/arhanpassant`
-- **Cargo**: `cargo install --git https://github.com/arhancanli/arhanpassant arhanpassant`
+- **Cargo**: `cargo install arhanpassant` (on ARM Linux:
+  `cargo install --git https://github.com/arhancanli/arhanpassant arhanpassant`)
 
 ## Quick start
 
