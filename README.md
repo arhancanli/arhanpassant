@@ -21,15 +21,25 @@ minutes.
 
 ## Status
 
-Version 0.12.0: NNUE network (8 king buckets, 8 output buckets), 512 hidden units, trained on 381.8M self-play positions. It passed its predecessor in 2,560 paired games at 8+0.08, gaining an estimated 12.4 Elo (95% interval 4.6 to 20.2). It is the 11th network in a row to pass the gate; every promotion is recorded in [`forge/ledger.json`](forge/ledger.json) with the games it took and the strength it gained.
+**Version 0.13.0.** Its network grew from 0.12 (trained on 381.8M self-play positions) through
+four rounds of reinforcement learning: each round fine-tunes the champion on 15 to 25 million
+fresh self-play positions, and the result must beat the champion before it replaces it. The
+four rounds gained +27.3, +20.5, +16.0 and +6.7 Elo in 1,032 to 5,714 paired games at 5+0.05.
+Three search changes that passed the same test together (+11.7 Elo) are now defaults:
+evaluation correction by minor pieces, detecting a forced repetition ahead of time, and capture
+futility pruning. Every promotion and every test, including the failures, is recorded in
+[`forge/ledger.json`](forge/ledger.json) and [`forge/tests.json`](forge/tests.json), and on the
+[engine page](https://arhanpassant.com/engine).
 
-Search changes are tested the same way, locally or on the cloud fleet: 6 were accepted (node-based time management, pawn-structure evaluation correction, piece-set evaluation correction, deeper/shallower re-searches, mop-up endgame knowledge, a history bonus for the move that made the opponent fail low), and 7 did not. Every result, including the failures, is in [`forge/tests.json`](forge/tests.json).
+**Measured strength: about 3,500 on the CCRL Blitz scale.** In 900 games at 10+0.1 against nine
+engines with published CCRL Blitz ratings (Stockfish 19 and 17.1, Koivisto 9.0, Ethereal 12,
+Laser 1.7, Stash 34 and 37, Weiss 1.4 and 2.0), a fit to the five opponents it scored 20-80%
+against gave 3,507 (95% interval 3,472 to 3,541, game statistics only). Against the same nine
+engines, with the same openings and settings, it scored 70.6 Elo better than version 0.12. These
+are our own matches, not an official CCRL rating.
 
-On Apple Silicon, the exact NEON neural output kernel measured 59.9% more nodes per second than the preceding optimized scalar build in nine alternating warmed benchmark runs per build. At the same 8+0.08 time control and with the same 0.12 network, it also passed a separate strength gate in 448 games: an estimated +80.5 Elo (95% interval +63.2 to +98.3). Both executable hashes and the test result are recorded in [`forge/tests.json`](forge/tests.json).
-
-**Measured strength: about 3,426 on the CCRL Blitz scale** (95% interval 3,414 to 3,437 from game statistics alone), from 2,284 games at 60+0.6 against 8 versions of Demolito, Ethereal, Laser, Stash and Weiss with published CCRL Blitz ratings: each opponent's rating is read from the CCRL list and one rating is fitted to the 6 matches the engine scores 20-80% in; at 10+0.1, 5,200 games give 3,448 (3,436 to 3,459). Stronger engines are too far ahead to rate against: Stockfish 17.1 (CCRL 3,771) 3.9% of 400 games, Koivisto 9.0 (CCRL 3,632) 10.6% of 400 games. The matches ran before the last search changes were accepted. These are our own matches on cloud machines, not an official CCRL rating, and the opponents' own ratings carry another 10-20 Elo of uncertainty. Details: [`forge/engines.json`](forge/engines.json).
-
-An earlier measurement, 480 games of version 0.7.0 against Stockfish 19 at fixed `UCI_Elo` levels of 2500, 2800, 3100, which Stockfish calibrates to the CCRL 40/4 list, gave about 3,026 ([`forge/anchors.json`](forge/anchors.json)).
+New in 0.13.0 besides strength: Chess960 (`UCI_Chess960`, X-FEN and Shredder-FEN), hash tables
+up to 1 TB cleared in parallel, and ARM Linux builds.
 
 ## What is inside
 
@@ -41,13 +51,23 @@ An earlier measurement, 480 games of version 0.7.0 against Stockfish 19 at fixed
   null-move, reverse futility, futility, late-move and static-exchange pruning;
   late-move reductions; singular extensions; history, continuation-history,
   killer and counter-move ordering.
-- **Evaluation**: a (768 → N) × 2 → 1 NNUE with squared clipped ReLU, int16
-  quantised and updated incrementally; tapered piece-square tables as the
+- **Evaluation**: an NNUE, (768 inputs × 8 king buckets → 512) × 2 → 8 output
+  buckets, with squared clipped ReLU, int16 quantised and updated incrementally
+  (NEON, AVX2 and WebAssembly SIMD paths); tapered piece-square tables as the
   baseline.
 - **Interfaces**: UCI, a Rust library (FEN, legal moves, SAN, perft) and a
   WebAssembly build that runs in browsers.
 - **Self-improvement tooling**: self-play data generation, an NNUE trainer and a
   match runner with a calibrated sequential test.
+
+## Install
+
+- **Download** a build for Windows, Linux (x86-64 or ARM) or macOS from the
+  [latest release](https://github.com/arhancanli/arhanpassant/releases/latest). On a PC,
+  pick the `avx2` build unless the computer is older than about 2013 (then the plain one).
+- **Homebrew** (macOS and Linux): `brew install arhancanli/tap/arhanpassant`
+- **Docker**: `docker run -i --rm ghcr.io/arhancanli/arhanpassant`
+- **Cargo**: `cargo install --git https://github.com/arhancanli/arhanpassant arhanpassant`
 
 ## Quick start
 
@@ -61,12 +81,13 @@ Banksia, En Croissant). Options:
 
 | Option          | Default      | Meaning                                          |
 | --------------- | ------------ | ------------------------------------------------ |
-| `Hash`          | 16           | Hash table size in MB                            |
-| `Threads`       | 1            | Search threads                                   |
+| `Hash`          | 16           | Hash table size in MB (up to 1,048,576)          |
+| `Threads`       | 1            | Search threads (up to 512)                       |
 | `Move Overhead` | 30           | Milliseconds kept in reserve per move            |
 | `EvalFile`      | `<embedded>` | Network file, or `<none>` for the hand-written evaluation |
 | `SyzygyPath`    | `<empty>`    | Folders of Syzygy tablebase files, separated by `:` |
 | `SyzygyProbeLimit` | 7         | Largest piece count probed during search         |
+| `UCI_Chess960`  | false        | Chess960: castling as king-takes-rook, X-FEN and Shredder-FEN |
 
 With tablebases loaded, the engine plays only moves that keep the tables'
 result at the root (the fastest wins, the slowest losses) and scores

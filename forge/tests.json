@@ -456,6 +456,460 @@
       "decision": "H0",
       "runtime": "local",
       "evidence": "local-cont4-9beb6fb3630b-d6367c515de8.json"
+    },
+    {
+      "date": "20261006",
+      "name": "hist-prune",
+      "change": "History pruning: at low depth, skip quiet moves whose history keeps failing",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1",
+        "hist_prune": "3000"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1"
+      },
+      "network": "champion-0.12.0.nnue",
+      "build": "9beb6fb3630b-d6367c515de8",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 12000,
+      "elo": 3.0,
+      "eloLo": -0.6,
+      "eloHi": 6.6,
+      "llr": 0.71,
+      "decision": "inconclusive",
+      "runtime": "local",
+      "evidence": "local-hist-prune-9beb6fb3630b-d6367c515de8.json"
+    },
+    {
+      "date": "20261006",
+      "name": "corr-joint",
+      "change": "Eval correction tables learn jointly, each toward what the others leave, instead of each the whole error",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1",
+        "corr_joint": "1"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1"
+      },
+      "network": "champion-0.12.0.nnue",
+      "build": "9beb6fb3630b-d6367c515de8",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 3200,
+      "elo": -4.8,
+      "eloLo": -11.6,
+      "eloHi": 2.1,
+      "llr": -2.97,
+      "decision": "H0",
+      "runtime": "local",
+      "evidence": "local-corr-joint-9beb6fb3630b-d6367c515de8.json"
+    },
+    {
+      "date": "20261006",
+      "name": "corr-cont-joint",
+      "change": "Eval correction also learned per previous move, with the tables learning jointly",
+      "candidate": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1",
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "baseline": {
+        "tm_nodes": "1",
+        "corr_pawn": "128",
+        "corr_np": "128",
+        "lmr_deeper": "1",
+        "mopup": "1",
+        "prior_bonus": "1"
+      },
+      "network": "champion-0.12.0.nnue",
+      "build": "9beb6fb3630b-d6367c515de8",
+      "tc": "8+0.08",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 3072,
+      "elo": 10.2,
+      "eloLo": 3.1,
+      "eloHi": 17.2,
+      "llr": 2.96,
+      "decision": "H1",
+      "runtime": "local",
+      "evidence": "local-corr-cont-joint-9beb6fb3630b-d6367c515de8.json"
+    },
+    {
+      "date": "20261006",
+      "name": "speed-7262ce5",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        10.0
+      ],
+      "runtime": "local",
+      "games": 504,
+      "elo": 28.3,
+      "eloLo": 11.4,
+      "eloHi": 45.4,
+      "llr": 2.95,
+      "decision": "H1",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-speed-7262ce5",
+      "build": "ap-speed-7262ce5 vs ap-base-daf3469",
+      "evidence": "elo/speed-7262ce5/run.log",
+      "change": "Speed: faster legality checks, move lists left uninitialised, a 16-bit network output kernel for NEON and AVX2, and hash-table prefetch; same search, more positions per second"
+    },
+    {
+      "date": "20261006",
+      "name": "order-bundle",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 2676,
+      "elo": 11.2,
+      "eloLo": 3.7,
+      "eloHi": 18.6,
+      "llr": 2.98,
+      "decision": "H1",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128",
+        "threat_hist": "1",
+        "pawn_hist": "1",
+        "threat_order": "100",
+        "check_order": "16384"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-order-a",
+      "build": "ap-order-a",
+      "evidence": "elo/order-bundle/run.log",
+      "change": "Move ordering: quiet-move history kept separately for threatened squares and for each pawn structure; quiet moves that save a piece attacked by a cheaper one, and safe checks, are tried earlier"
+    },
+    {
+      "date": "20261006",
+      "name": "search-b",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 1220,
+      "elo": 2.3,
+      "eloLo": -8.6,
+      "eloHi": 13.2,
+      "llr": -0.04,
+      "decision": "inconclusive",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128",
+        "fh_blend": "1",
+        "lmr_cutoff": "1",
+        "lmr_capt": "8192",
+        "se_neg": "1",
+        "fut_hist": "8192",
+        "improving_v2": "1"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-search-b",
+      "build": "ap-search-b",
+      "evidence": "elo/search-b/run.log",
+      "change": "Six search refinements together: fail-high blending, an extra reduction after repeated cutoffs, capture-history reductions, stronger negative singular extensions, history-aware pruning depth, and an 'improving' fallback"
+    },
+    {
+      "date": "20261006",
+      "name": "search-b1",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 720,
+      "elo": -0.0,
+      "eloLo": -14.0,
+      "eloHi": 14.0,
+      "llr": -0.25,
+      "decision": "inconclusive",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128",
+        "fh_blend": "1",
+        "lmr_cutoff": "1",
+        "improving_v2": "1"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-d1",
+      "build": "ap-d1",
+      "evidence": "elo/search-b1/run.log",
+      "change": "Three of those refinements: fail-high blending, an extra reduction after repeated cutoffs, and the 'improving' fallback"
+    },
+    {
+      "date": "20261006",
+      "name": "tm-falling",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 1080,
+      "elo": -3.5,
+      "eloLo": -14.7,
+      "eloHi": 7.6,
+      "llr": -0.93,
+      "decision": "inconclusive",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128",
+        "tm_falling": "600"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-net-0.13.0-rl1",
+      "build": "ap-net-0.13.0-rl1",
+      "evidence": "elo/tm-falling/run.log",
+      "change": "Time management: think longer when the score falls"
+    },
+    {
+      "date": "20261006",
+      "name": "kb16-vs-rl1",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 2002,
+      "elo": -9.2,
+      "eloLo": -17.9,
+      "eloHi": -0.5,
+      "llr": -2.96,
+      "decision": "H0",
+      "candidate": {},
+      "baseline": {
+        "EvalFile": "champion-0.13.0-rl1.nnue"
+      },
+      "network": "rl1-kb16.nnue",
+      "build": "ap-net-0.13.0-rl1",
+      "evidence": "elo/kb16-vs-rl1/run.log",
+      "change": "Network with 16 king buckets instead of 8, trained on the same positions"
+    },
+    {
+      "date": "20261006",
+      "name": "qs-lmp",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 4174,
+      "elo": -3.2,
+      "eloLo": -9.3,
+      "eloHi": 2.9,
+      "llr": -2.96,
+      "decision": "H0",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128",
+        "qs_lmp": "3"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-net-0.13.0-rl1",
+      "build": "ap-net-0.13.0-rl1",
+      "evidence": "elo/qs-lmp/run.log",
+      "change": "Quiescence search: after three moves, skip captures that are not recaptures, checks or promotions"
+    },
+    {
+      "date": "20261006",
+      "name": "corr-minor",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 6512,
+      "elo": 6.1,
+      "eloLo": 1.3,
+      "eloHi": 11.0,
+      "llr": 2.95,
+      "decision": "H1",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128",
+        "corr_minor": "128"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-net-0.13.0-rl1",
+      "build": "ap-net-0.13.0-rl1",
+      "evidence": "elo/corr-minor/run.log",
+      "change": "Evaluation correction keyed by the knights and bishops on the board"
+    },
+    {
+      "date": "20261006",
+      "name": "upcoming-rep",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 2640,
+      "elo": 11.2,
+      "eloLo": 3.7,
+      "eloHi": 18.7,
+      "llr": 2.94,
+      "decision": "H1",
+      "candidate": {
+        "upcoming_rep": "1"
+      },
+      "baseline": {},
+      "network": "embedded in ap-net-0.13.0-rl1",
+      "build": "ap-net-0.13.0-rl1",
+      "evidence": "elo/upcoming-rep/run.log",
+      "change": "A side that can force a repetition scores at least a draw, detected ahead of time with cuckoo tables"
+    },
+    {
+      "date": "20261007",
+      "name": "cap-fut",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 1254,
+      "elo": 19.1,
+      "eloLo": 8.8,
+      "eloHi": 29.5,
+      "llr": 2.95,
+      "decision": "H1",
+      "candidate": {
+        "corr_joint": "1",
+        "corr_cont": "128",
+        "cap_fut": "250"
+      },
+      "baseline": {
+        "corr_joint": "1",
+        "corr_cont": "128"
+      },
+      "network": "embedded in ap-net-0.13.0-rl1",
+      "build": "ap-net-0.13.0-rl1",
+      "evidence": "elo/cap-fut/run.log",
+      "change": "Capture futility pruning near the leaves, base margin 250"
+    },
+    {
+      "date": "20261007",
+      "name": "smp-skip-4t",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "runtime": "local",
+      "games": 2060,
+      "elo": 1.5,
+      "eloLo": -6.3,
+      "eloHi": 9.4,
+      "llr": -0.31,
+      "decision": "inconclusive",
+      "candidate": {
+        "Threads": "4",
+        "smp_skip": "1"
+      },
+      "baseline": {
+        "Threads": "4"
+      },
+      "network": "embedded in ap-net-0.13.0-rl1",
+      "build": "ap-net-0.13.0-rl1",
+      "evidence": "elo/smp-skip-4t/run.log",
+      "change": "With four threads, helper threads stagger their search depths"
+    },
+    {
+      "date": "20261007",
+      "name": "search3-combo",
+      "change": "The three passed search changes together (minor-piece correction, upcoming repetition, capture futility), on the round-3 network",
+      "candidate": {
+        "corr_minor": "128",
+        "upcoming_rep": "1",
+        "cap_fut": "250"
+      },
+      "baseline": {},
+      "network": "embedded in ap-net-0.13.0-rl3",
+      "build": "ap-net-0.13.0-rl3",
+      "tc": "5+0.05",
+      "bounds": [
+        0.0,
+        5.0
+      ],
+      "games": 2492,
+      "elo": 11.7,
+      "eloLo": 4.0,
+      "eloHi": 19.5,
+      "llr": 2.95,
+      "decision": "H1",
+      "runtime": "local",
+      "evidence": "elo/search3-combo/run.log"
     }
   ]
 }

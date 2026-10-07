@@ -4,7 +4,7 @@
     "elo1": 5,
     "alpha": 0.05,
     "beta": 0.05,
-    "tc": "8+0.08",
+    "tc": "5+0.05",
     "book": "UHO_4060_v4"
   },
   "versions": [
@@ -17,7 +17,8 @@
       "elo": null,
       "eloLo": null,
       "eloHi": null,
-      "llr": null
+      "llr": null,
+      "tc": "8+0.08"
     },
     {
       "version": "0.2.0",
@@ -28,7 +29,8 @@
       "elo": 83.1,
       "eloLo": 61.1,
       "eloHi": 105.8,
-      "llr": 2.96
+      "llr": 2.96,
+      "tc": "8+0.08"
     },
     {
       "version": "0.3.0",
@@ -40,7 +42,8 @@
       "eloLo": 204.0,
       "eloHi": 264.1,
       "llr": 2.96,
-      "net": "champion-0.3.0.nnue"
+      "net": "champion-0.3.0.nnue",
+      "tc": "8+0.08"
     },
     {
       "version": "0.4.0",
@@ -52,7 +55,8 @@
       "eloLo": 34.4,
       "eloHi": 68.8,
       "llr": 2.96,
-      "net": "champion-0.4.0.nnue"
+      "net": "champion-0.4.0.nnue",
+      "tc": "8+0.08"
     },
     {
       "version": "0.5.0",
@@ -64,7 +68,8 @@
       "eloLo": 9.3,
       "eloHi": 30.4,
       "llr": 2.97,
-      "net": "champion-0.5.0.nnue"
+      "net": "champion-0.5.0.nnue",
+      "tc": "8+0.08"
     },
     {
       "version": "0.6.0",
@@ -76,7 +81,8 @@
       "eloLo": 27.8,
       "eloHi": 60.1,
       "llr": 2.95,
-      "net": "champion-0.6.0.nnue"
+      "net": "champion-0.6.0.nnue",
+      "tc": "8+0.08"
     },
     {
       "version": "0.7.0",
@@ -87,7 +93,8 @@
       "elo": 27.6,
       "eloLo": 14.9,
       "eloHi": 40.2,
-      "llr": 2.95
+      "llr": 2.95,
+      "tc": "8+0.08"
     },
     {
       "version": "0.8.0",
@@ -99,7 +106,8 @@
       "eloLo": 20.4,
       "eloHi": 48.2,
       "llr": 3.01,
-      "net": "champion-0.8.0.nnue"
+      "net": "champion-0.8.0.nnue",
+      "tc": "8+0.08"
     },
     {
       "version": "0.9.0",
@@ -110,7 +118,8 @@
       "elo": 14.6,
       "eloLo": 5.9,
       "eloHi": 23.3,
-      "llr": 3.06
+      "llr": 3.06,
+      "tc": "8+0.08"
     },
     {
       "version": "0.10.0",
@@ -122,7 +131,8 @@
       "eloLo": 1.0,
       "eloHi": 9.5,
       "llr": 2.98,
-      "net": "champion-0.10.0.nnue"
+      "net": "champion-0.10.0.nnue",
+      "tc": "8+0.08"
     },
     {
       "version": "0.11.0",
@@ -134,7 +144,8 @@
       "eloLo": 14.2,
       "eloHi": 38.8,
       "llr": 2.98,
-      "net": "champion-0.11.0.nnue"
+      "net": "champion-0.11.0.nnue",
+      "tc": "8+0.08"
     },
     {
       "version": "0.12.0",
@@ -146,7 +157,60 @@
       "eloLo": 4.6,
       "eloHi": 20.2,
       "llr": 3.09,
-      "net": "champion-0.12.0.nnue"
+      "net": "champion-0.12.0.nnue",
+      "tc": "8+0.08"
+    },
+    {
+      "version": "0.13.0-rl1",
+      "date": "2026-10-06",
+      "change": "Reinforcement learning round 1: the previous network fine-tuned on 20.0M new self-play positions",
+      "status": "promoted",
+      "games": 1032,
+      "elo": 27.3,
+      "eloLo": 14.9,
+      "eloHi": 39.8,
+      "llr": 2.97,
+      "net": "champion-0.13.0-rl1.nnue",
+      "tc": "5+0.05"
+    },
+    {
+      "version": "0.13.0-rl2",
+      "date": "2026-10-06",
+      "change": "Reinforcement learning round 2: the previous network fine-tuned on 15.1M new self-play positions plus round 1's 20.0M",
+      "status": "promoted",
+      "games": 1288,
+      "elo": 20.5,
+      "eloLo": 9.9,
+      "eloHi": 31.1,
+      "llr": 2.94,
+      "net": "champion-0.13.0-rl2.nnue",
+      "tc": "5+0.05"
+    },
+    {
+      "version": "0.13.0-rl3",
+      "date": "2026-10-07",
+      "change": "Reinforcement learning round 3: the previous network fine-tuned on 16.6M new self-play positions plus round 2's 23.2M",
+      "status": "promoted",
+      "games": 1756,
+      "elo": 16.0,
+      "eloLo": 6.7,
+      "eloHi": 25.4,
+      "llr": 2.95,
+      "net": "champion-0.13.0-rl3.nnue",
+      "tc": "5+0.05"
+    },
+    {
+      "version": "0.13.0-rl4",
+      "date": "2026-10-07",
+      "change": "Reinforcement learning round 4: the previous network fine-tuned on 15.1M new self-play positions plus round 3's 24.2M",
+      "status": "promoted",
+      "games": 5714,
+      "elo": 6.7,
+      "eloLo": 1.5,
+      "eloHi": 11.9,
+      "llr": 2.95,
+      "net": "champion-0.13.0-rl4.nnue",
+      "tc": "5+0.05"
     }
   ]
 }

@@ -1,0 +1,9 @@
+target
+.git
+.github
+forge
+trainer
+play
+tools
+*.db
+.claude-flow
