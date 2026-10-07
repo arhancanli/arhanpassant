@@ -3,7 +3,7 @@
 //! and reduction heuristics. Several threads share one table (lazy SMP).
 
 use crate::eval;
-use crate::history::{corr_update, corr_value, pawn_key, piece_key, ContKey, History, QuietCtx, CORR_GRAIN, PAWN_HIST_SIZE};
+use crate::history::{corr_update, corr_value, pawn_key, piece_key, ContKey, History, QuietCtx, CONT_KEYS, CORR_GRAIN, CORR_SIZE, PAWN_HIST_SIZE};
 use crate::movepick::{MovePicker, OrderInfo};
 use crate::nnue::{Accumulators, Network};
 use crate::params as p;
@@ -97,6 +97,16 @@ struct StackEntry {
     reduction: i32,
     /// Double (or triple) extensions on the path from the root to this node.
     dexts: i32,
+}
+
+/// Indices of one position in each eval-correction table.
+struct CorrKeys {
+    pawns: usize,
+    np: [usize; 2],
+    cont: Option<usize>,
+    minor: usize,
+    major: usize,
+    cont2: Option<usize>,
 }
 
 pub struct SearchResult {
@@ -245,9 +255,10 @@ impl Searcher {
     }
 
     /// Keys of the correction tables for a position: pawn structure, each
-    /// side's other pieces, and the previous move.
+    /// side's other pieces, the previous move (and the two before it), and the
+    /// minor and major pieces of both sides.
     #[inline(always)]
-    fn corr_keys(&self, pos: &Position, ply: usize) -> (usize, [usize; 2], Option<usize>, usize) {
+    fn corr_keys(&self, pos: &Position, ply: usize) -> CorrKeys {
         let pawns = pawn_key(pos.pieces(Color::White, PieceType::Pawn), pos.pieces(Color::Black, PieceType::Pawn));
         let side = |c: Color| {
             piece_key([PieceType::Knight, PieceType::Bishop, PieceType::Rook, PieceType::Queen, PieceType::King].map(|pt| pos.pieces(c, pt)))
@@ -255,43 +266,56 @@ impl Searcher {
         let np = if p::corr_np() != 0 { [side(Color::White), side(Color::Black)] } else { [0, 0] };
         let prev = if ply >= 1 { self.stack[ply - 1].cont } else { ContKey::NONE };
         let cont = (prev.piece != 12).then(|| prev.piece as usize * 64 + prev.to as usize);
-        let minor = if p::corr_minor() != 0 {
+        let pair = |a: PieceType, b: PieceType| {
             piece_key([
-                pos.pieces(Color::White, PieceType::Knight),
-                pos.pieces(Color::White, PieceType::Bishop),
-                pos.pieces(Color::Black, PieceType::Knight),
-                pos.pieces(Color::Black, PieceType::Bishop),
+                pos.pieces(Color::White, a),
+                pos.pieces(Color::White, b),
+                pos.pieces(Color::Black, a),
+                pos.pieces(Color::Black, b),
                 pos.type_bb(PieceType::King),
             ])
-        } else {
-            0
         };
-        (pawns, np, cont, minor)
+        let minor = if p::corr_minor() != 0 { pair(PieceType::Knight, PieceType::Bishop) } else { 0 };
+        let major = if p::corr_major() != 0 { pair(PieceType::Rook, PieceType::Queen) } else { 0 };
+        let prev2 = if ply >= 2 { self.stack[ply - 2].cont } else { ContKey::NONE };
+        let cont2 = (p::corr_cont2() != 0 && prev.piece != 12 && prev2.piece != 12)
+            .then(|| {
+                let pair = ((prev2.piece as usize * 64 + prev2.to as usize) * CONT_KEYS + prev.piece as usize * 64 + prev.to as usize) as u64;
+                (pair.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 50) as usize & (CORR_SIZE - 1)
+            });
+        CorrKeys { pawns, np, cont, minor, major, cont2 }
     }
 
     /// Static evaluation adjusted by what search has learned about similar positions.
     #[inline(always)]
     fn corrected(&self, pos: &Position, raw: i32, ply: usize) -> i32 {
         let (wp, wn, wc, wm) = (p::corr_pawn(), p::corr_np(), p::corr_cont(), p::corr_minor());
-        if wp == 0 && wn == 0 && wc == 0 && wm == 0 {
+        let (wj, w2) = (p::corr_major(), p::corr_cont2());
+        if wp == 0 && wn == 0 && wc == 0 && wm == 0 && wj == 0 && w2 == 0 {
             return raw;
         }
         let stm = pos.side_to_move();
-        let (pawns, np, cont, minor) = self.corr_keys(pos, ply);
+        let k = self.corr_keys(pos, ply);
         let h = &self.history;
         let mut c = 0;
         if wp != 0 {
-            c += h.correction(stm, pawns, wp);
+            c += h.correction(stm, k.pawns, wp);
         }
         if wn != 0 {
             // Each side's table counts half.
-            c += corr_value(h.corr_np[stm.idx() * 2][np[0]], wn) / 2 + corr_value(h.corr_np[stm.idx() * 2 + 1][np[1]], wn) / 2;
+            c += corr_value(h.corr_np[stm.idx() * 2][k.np[0]], wn) / 2 + corr_value(h.corr_np[stm.idx() * 2 + 1][k.np[1]], wn) / 2;
         }
-        if let (true, Some(k)) = (wc != 0, cont) {
-            c += corr_value(h.corr_cont[stm.idx()][k], wc);
+        if let (true, Some(i)) = (wc != 0, k.cont) {
+            c += corr_value(h.corr_cont[stm.idx()][i], wc);
         }
         if wm != 0 {
-            c += corr_value(h.corr_minor[stm.idx()][minor], wm);
+            c += corr_value(h.corr_minor[stm.idx()][k.minor], wm);
+        }
+        if wj != 0 {
+            c += corr_value(h.corr_major[stm.idx()][k.major], wj);
+        }
+        if let (true, Some(i)) = (w2 != 0, k.cont2) {
+            c += corr_value(h.corr_cont2[stm.idx()][i], w2);
         }
         (raw + c).clamp(-TB_WIN_IN_MAX + 1, TB_WIN_IN_MAX - 1)
     }
@@ -1056,14 +1080,14 @@ impl Searcher {
             };
             // Learn how far search landed from the static evaluation, when the
             // result says something about it (not a capture, bound on the right side).
-            if (p::corr_pawn() != 0 || p::corr_np() != 0 || p::corr_cont() != 0 || p::corr_minor() != 0)
+            if (p::corr_pawn() != 0 || p::corr_np() != 0 || p::corr_cont() != 0 || p::corr_minor() != 0 || p::corr_major() != 0 || p::corr_cont2() != 0)
                 && !in_check
                 && !best_move.is_noisy()
                 && best_score.abs() < TB_WIN_IN_MAX
                 && !(bound == BOUND_LOWER && best_score <= static_eval)
                 && !(bound == BOUND_UPPER && best_score >= static_eval)
             {
-                let (pawns, np, cont, minor) = self.corr_keys(pos, ply);
+                let k = self.corr_keys(pos, ply);
                 // Each table moves toward the whole error (search minus raw eval), or, with
                 // corr_joint, toward its own value plus what the corrected eval still misses,
                 // so tables that add up do not count the same error twice. With one table on
@@ -1073,21 +1097,29 @@ impl Searcher {
                 let residual = if joint { best_score - self.corrected(pos, raw_eval, ply) } else { 0 };
                 let target = |e: i16| if joint { e as i32 / CORR_GRAIN + residual } else { best_score - raw_eval };
                 if p::corr_pawn() != 0 {
-                    let e = &mut self.history.corr[us.idx()][pawns];
+                    let e = &mut self.history.corr[us.idx()][k.pawns];
                     corr_update(e, depth, target(*e));
                 }
                 if p::corr_np() != 0 {
-                    for (i, key) in np.iter().enumerate() {
+                    for (i, key) in k.np.iter().enumerate() {
                         let e = &mut self.history.corr_np[us.idx() * 2 + i][*key];
                         corr_update(e, depth, target(*e));
                     }
                 }
-                if let (true, Some(k)) = (p::corr_cont() != 0, cont) {
-                    let e = &mut self.history.corr_cont[us.idx()][k];
+                if let (true, Some(i)) = (p::corr_cont() != 0, k.cont) {
+                    let e = &mut self.history.corr_cont[us.idx()][i];
                     corr_update(e, depth, target(*e));
                 }
                 if p::corr_minor() != 0 {
-                    let e = &mut self.history.corr_minor[us.idx()][minor];
+                    let e = &mut self.history.corr_minor[us.idx()][k.minor];
+                    corr_update(e, depth, target(*e));
+                }
+                if p::corr_major() != 0 {
+                    let e = &mut self.history.corr_major[us.idx()][k.major];
+                    corr_update(e, depth, target(*e));
+                }
+                if let (true, Some(i)) = (p::corr_cont2() != 0, k.cont2) {
+                    let e = &mut self.history.corr_cont2[us.idx()][i];
                     corr_update(e, depth, target(*e));
                 }
             }
@@ -1200,7 +1232,8 @@ impl Searcher {
                     continue;
                 }
             }
-            if !in_check && best_score > -TB_WIN_IN_MAX && !see_ge(pos, m, p::qs_see()) {
+            // Captures that lose material are skipped; so are such evasions once one evasion has saved the position.
+            if (!in_check || p::qs_evasion_see() != 0) && best_score > -TB_WIN_IN_MAX && !see_ge(pos, m, p::qs_see()) {
                 continue;
             }
             let child = pos.after(m);

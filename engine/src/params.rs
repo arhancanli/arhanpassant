@@ -129,4 +129,7 @@ tunables! {
     iir_pv: 0, 0, 3;              // PV nodes without a table move reduce this many plies more than other nodes (internal iterative reduction)
     lmr_cut: 1, 0, 3;             // extra reduction at expected cut nodes
     post_lmr: 0, 0, 1;            // after a reduced quiet move is re-searched at full depth, its continuation history learns the result
+    corr_major: 0, 0, 256;        // eval correction by the rooks and queens of both sides (0 = off)
+    corr_cont2: 0, 0, 256;        // eval correction by the last two moves together (0 = off)
+    qs_evasion_see: 0, 0, 1;      // quiescence in check: once an evasion has saved the position, skip evasions that lose material
 }

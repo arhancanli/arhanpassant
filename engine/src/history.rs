@@ -42,6 +42,8 @@ impl Default for QuietCtx {
 pub const CORR_SIZE: usize = 16384;
 pub const CORR_GRAIN: i32 = 256;
 pub const CORR_MAX: i32 = 64 * CORR_GRAIN;
+/// Continuation keys (piece 0..12 or 12 for none, times 64 destinations).
+pub const CONT_KEYS: usize = 13 * 64;
 
 /// (piece index 0..12 or 12 for "none", destination square)
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
@@ -74,6 +76,10 @@ pub struct History {
     pub corr_cont: Vec<[i16; 13 * 64]>,
     /// [side to move][key of both sides' knights and bishops (and kings)]
     pub corr_minor: Vec<[i16; CORR_SIZE]>,
+    /// [side to move][key of both sides' rooks and queens (and kings)]
+    pub corr_major: Vec<[i16; CORR_SIZE]>,
+    /// [side to move][hash of (move two plies back, previous move)]
+    pub corr_cont2: Vec<[i16; CORR_SIZE]>,
     /// [ply from the root][from][to], reset at the start of every search (`low_ply`)
     pub low_ply: [[[i16; 64]; 64]; LOW_PLY],
 }
@@ -97,6 +103,8 @@ impl History {
             corr_np: vec![[0; CORR_SIZE]; 4],
             corr_cont: vec![[0; 13 * 64]; 2],
             corr_minor: vec![[0; CORR_SIZE]; 2],
+            corr_major: vec![[0; CORR_SIZE]; 2],
+            corr_cont2: vec![[0; CORR_SIZE]; 2],
             low_ply: [[[0; 64]; 64]; LOW_PLY],
         })
     }
@@ -111,7 +119,7 @@ impl History {
         }
         self.capture = [[[0; 6]; 64]; 12];
         self.counter = [[Move::NULL; 64]; 13];
-        for c in self.corr.iter_mut().chain(self.corr_np.iter_mut()).chain(self.corr_minor.iter_mut()) {
+        for c in self.corr.iter_mut().chain(self.corr_np.iter_mut()).chain(self.corr_minor.iter_mut()).chain(self.corr_major.iter_mut()).chain(self.corr_cont2.iter_mut()) {
             *c = [0; CORR_SIZE];
         }
         for c in self.corr_cont.iter_mut() {
