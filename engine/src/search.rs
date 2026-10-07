@@ -1027,7 +1027,7 @@ impl Searcher {
         }
 
         if best_score >= beta {
-            let bonus = Self::hist_bonus(depth);
+            let bonus = Self::hist_bonus(depth + (p::bonus_margin() != 0 && best_score > beta + p::bonus_margin()) as i32);
             let malus = Self::hist_malus(depth);
             let bp = pos.moved_piece(best_move);
             if best_move.is_quiet() {
@@ -1356,7 +1356,7 @@ impl Searcher {
         }
         result.best_move = self.root_allowed.first().copied().unwrap_or(legal[0]);
         let max_depth = limits.depth.unwrap_or(MAX_PLY as i32 - 1).clamp(1, MAX_PLY as i32 - 1);
-        let mut score = 0;
+        let mut score: i32 = 0;
         let mut depth = 0;
         while depth < max_depth {
             depth += 1;
@@ -1376,6 +1376,9 @@ impl Searcher {
             self.root_best = (Move::NULL, -INF);
             // Aspiration windows.
             let mut delta = p::asp_delta();
+            if p::asp_score() != 0 && score.abs() < TB_WIN_IN_MAX {
+                delta += score * score / p::asp_score();
+            }
             let (mut alpha, mut beta) = if depth >= 4 { ((score - delta).max(-INF), (score + delta).min(INF)) } else { (-INF, INF) };
             let mut search_depth = depth;
             loop {
