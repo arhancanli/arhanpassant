@@ -2,6 +2,7 @@
 # ArhanPassant fleet node: build the engine at $BRANCH, then generate
 # self-play data on every core and upload finished chunks to the bucket.
 # A file ~/HOLD stops new work (manual jobs such as SPRT/SPSA run instead).
+# A file ~/BOT_THREADS (a number) keeps that many cores free for the Lichess bot.
 set -u
 source ~/.cargo/env
 BRANCH=${BRANCH:-engine/elo-20261006}
@@ -31,7 +32,9 @@ upload_loop() {
   done
 }
 upload_loop &
-THREADS=$(nproc)
+RESERVED=$(cat ~/BOT_THREADS 2>/dev/null || echo 0)
+THREADS=$(( $(nproc) - RESERVED ))
+[ "$THREADS" -lt 1 ] && THREADS=1
 while true; do
   if [ -e ~/HOLD ]; then sleep 60; continue; fi
   log "datagen $THREADS threads with $REV"
