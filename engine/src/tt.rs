@@ -70,12 +70,31 @@ impl TranspositionTable {
         TranspositionTable { clusters, age: AtomicU8::new(0) }
     }
 
+    /// Empty the table. Big tables are cleared by several threads (one per 256 MB,
+    /// up to the machine's cores), so a game start stays quick even at hundreds of GB.
     pub fn clear(&self) {
-        for c in &self.clusters {
-            for s in &c.slots {
-                s.key.store(0, Relaxed);
-                s.data.store(0, Relaxed);
+        let bytes = self.clusters.len() * std::mem::size_of::<Cluster>();
+        #[cfg(not(target_arch = "wasm32"))]
+        let threads = (bytes >> 28).clamp(1, std::thread::available_parallelism().map_or(1, |n| n.get()));
+        #[cfg(target_arch = "wasm32")]
+        let threads = { let _ = bytes; 1 };
+        let wipe = |part: &[Cluster]| {
+            for c in part {
+                for s in &c.slots {
+                    s.key.store(0, Relaxed);
+                    s.data.store(0, Relaxed);
+                }
             }
+        };
+        if threads <= 1 {
+            wipe(&self.clusters);
+        } else {
+            #[cfg(not(target_arch = "wasm32"))]
+            std::thread::scope(|scope| {
+                for part in self.clusters.chunks(self.clusters.len().div_ceil(threads)) {
+                    scope.spawn(move || wipe(part));
+                }
+            });
         }
         self.age.store(0, Relaxed);
     }

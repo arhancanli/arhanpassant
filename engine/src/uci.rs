@@ -118,7 +118,7 @@ impl Uci {
             "uci" => {
                 println!("id name {NAME} {VERSION}");
                 println!("id author Arhan Canli");
-                println!("option name Hash type spin default 16 min 1 max 65536");
+                println!("option name Hash type spin default 16 min 1 max 1048576");
                 println!("option name Threads type spin default 1 min 1 max 512");
                 println!("option name Move Overhead type spin default 30 min 0 max 5000");
                 println!("option name EvalFile type string default {}", self.eval_file);
@@ -202,7 +202,7 @@ impl Uci {
         match name.to_ascii_lowercase().as_str() {
             "hash" => {
                 if let Ok(v) = value.parse::<usize>() {
-                    self.hash_mb = v.clamp(1, 65536);
+                    self.hash_mb = v.clamp(1, 1_048_576);
                     self.rebuild();
                 }
             }
