@@ -177,6 +177,8 @@ pub struct Searcher {
     prev_score: Option<i32>,
     /// 0 for the main thread, 1.. for helpers (depth staggering).
     pub thread_index: usize,
+    /// Depth of the current iteration (singular-extension limit).
+    root_depth: i32,
 }
 
 impl Searcher {
@@ -209,6 +211,7 @@ impl Searcher {
             tb_hits: 0,
             prev_score: None,
             thread_index: 0,
+            root_depth: 1,
         }
     }
 
@@ -719,7 +722,7 @@ impl Searcher {
         }
 
         // Internal iterative reduction.
-        if depth >= 4 && tt_move.is_null() && excluded.is_null() && (PV || cut_node) {
+        if depth >= 4 && tt_move.is_null() && excluded.is_null() && (PV || cut_node || p::iir_all() != 0) {
             depth -= 1;
         }
 
@@ -812,7 +815,12 @@ impl Searcher {
 
             // Singular extension.
             let mut ext = 0;
-            if !root && m == tt_move && excluded.is_null() && depth >= p::se_depth() {
+            if !root
+                && m == tt_move
+                && excluded.is_null()
+                && depth >= p::se_depth()
+                && (p::se_limit() == 0 || (ply as i32) < 2 * self.root_depth)
+            {
                 if let Some(e) = tt_hit {
                     if e.depth >= depth - 3 && e.bound & BOUND_LOWER != 0 && tt_score.abs() < TB_WIN_IN_MAX {
                         let s_beta = tt_score - depth * p::se_beta_mult() / 16;
@@ -824,7 +832,14 @@ impl Searcher {
                             return 0;
                         }
                         if s < s_beta {
-                            ext = if !PV && s < s_beta - p::se_double_margin() { 2 } else { 1 };
+                            let double = s_beta - p::se_double_margin();
+                            ext = if PV || s >= double {
+                                1
+                            } else if p::triple_ext() != 0 && is_quiet && s < double - p::triple_ext() {
+                                3
+                            } else {
+                                2
+                            };
                         } else if s_beta >= beta {
                             return s_beta;
                         } else if tt_score >= beta {
@@ -871,6 +886,9 @@ impl Searcher {
                     }
                     if !tt_pv {
                         r += 1;
+                    } else if let (true, Some(e)) = (p::lmr_ttpv() != 0, tt_hit) {
+                        // A table-PV node whose stored result beats alpha is likely to stay on the PV.
+                        r -= (tt_score > alpha) as i32 + (p::lmr_ttpv() >= 2 && e.depth >= depth) as i32;
                     }
                     if cut_node {
                         r += 1;
@@ -932,6 +950,10 @@ impl Searcher {
                         break;
                     }
                     alpha = score;
+                    // The remaining moves only have to show they are not better: search them shallower.
+                    if p::alpha_red() != 0 && depth > 2 && depth < 14 && score.abs() < TB_WIN_IN_MAX {
+                        depth -= p::alpha_red();
+                    }
                 }
             }
             if m != best_move {
@@ -1117,6 +1139,9 @@ impl Searcher {
                 }
             }
             if best_score >= beta {
+                if p::qs_fh_blend() != 0 && best_score.abs() < TB_WIN_IN_MAX {
+                    return (best_score + beta) / 2;
+                }
                 return best_score;
             }
             alpha = alpha.max(best_score);
@@ -1189,6 +1214,9 @@ impl Searcher {
         }
         if in_check && moves_searched == 0 {
             return -MATE + ply as i32;
+        }
+        if p::qs_fh_blend() != 0 && best_score >= beta && best_score.abs() < TB_WIN_IN_MAX {
+            best_score = (best_score + beta) / 2;
         }
         let bound = if best_score >= beta { BOUND_LOWER } else { BOUND_UPPER };
         self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, 0, bound, false);
@@ -1280,6 +1308,7 @@ impl Searcher {
                     depth = (depth + SKIP_SIZE[cycle]).min(max_depth);
                 }
             }
+            self.root_depth = depth;
             if self.shared.stop.load(Ordering::Relaxed) {
                 break;
             }
