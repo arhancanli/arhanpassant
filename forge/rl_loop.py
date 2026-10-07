@@ -3,8 +3,10 @@
 Every cycle it pulls new self-play from the Oracle bucket, counts the
 positions played by the current champion since its promotion (Mac round
 folders plus bucket folders of builds created after the promotion), and once
-there are enough, fine-tunes the champion on this round's data plus the
-previous round's (a two-round replay window). The candidate is tested with an
+there are enough, fine-tunes the champion on this round's data (see recipe()
+for the learning rate, epochs and how many earlier rounds are replayed). When no
+epoch beats the champion on held-out games there is nothing to test and the
+round keeps collecting. Otherwise the candidate is tested with an
 SPRT at the front of the Mac test queue; if it passes it becomes the network
 compiled into the engine (commit + push), the Mac self-play restarts on it in
 new round folders, and the fleet VMs rebuild. If it fails, the round keeps
@@ -147,9 +149,24 @@ def restart_fleet():
             log(f"fleet {parts[0]}: {r.stdout.strip() or r.stderr.strip()[:120]}")
 
 
+def recipe(state):
+    """Training settings, overridable in state.json ("recipe"). A fine-tune of a
+    converged network needs a low learning rate: at 1e-4 a fresh optimizer knocks
+    it off its optimum and no epoch beats the starting network (round 6, 10-07)."""
+    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 0}
+    r.update(state.get("recipe", {}))
+    return r
+
+
 def train(state, rnd):
+    """Fine-tune the champion; returns the candidate, "same" when no epoch beat
+    the champion on held-out games (the trainer then keeps the champion), or None."""
+    rc = recipe(state)
     cand = f"{DATA}/nets/rl{rnd}.nnue"
-    files = round_files(state, rnd) + (round_files(state, rnd - 1) if str(rnd - 1) in state["rounds"] else [])
+    files = round_files(state, rnd)
+    for back in range(1, rc["replay"] + 1):  # earlier rounds' data, if the recipe replays it
+        if str(rnd - back) in state["rounds"]:
+            files += round_files(state, rnd - back)
     listing = f"{RL}/r{rnd}-files.txt"
     with open(listing, "w") as f:
         f.write("\n".join(files))
@@ -158,11 +175,14 @@ def train(state, rnd):
         json.dump(manifest, f)
     cmd = [PY, f"{REPO}/trainer/train.py", "--data", *manifest.keys(), "--manifest", f"{RL}/r{rnd}-manifest.json",
            "--hidden", str(state.get("hidden", 512)), "--input-buckets", str(state.get("input_buckets", 8)),
-           "--output-buckets", "8", "--epochs", "3", "--lr", "1e-4",
+           "--output-buckets", "8", "--epochs", str(rc["epochs"]), "--lr", str(rc["lr"]), "--warmup", str(rc["warmup"]),
            "--factorize", "--init-nnue", state["champion"], "--out", cand, "--workers", "4", "--threads", "4"]
     with open(f"{RL}/train-r{rnd}.log", "w") as f:
-        rc = subprocess.run(["nice", "-n", "10", *cmd], stdout=f, stderr=subprocess.STDOUT).returncode
-    return cand if rc == 0 and os.path.exists(cand) else None
+        code = subprocess.run(["nice", "-n", "10", *cmd], stdout=f, stderr=subprocess.STDOUT).returncode
+    if code != 0 or not os.path.exists(cand):
+        return None
+    with open(cand, "rb") as a, open(state["champion"], "rb") as b:
+        return "same" if a.read() == b.read() else cand
 
 
 def queue_sprt(state, rnd, cand):
@@ -233,9 +253,17 @@ def main():
         elif r["positions"] >= max(THRESHOLD, r.get("next_try_at", 0)):
             r["tries"] += 1
             save(state)
-            log(f"round {rnd} try {r['tries']}: training on {r['positions']:,} positions (+ previous round)")
+            rc = recipe(state)
+            replay = f" (+ {rc['replay']} earlier rounds)" if rc["replay"] else ""
+            log(f"round {rnd} try {r['tries']}: training on {r['positions']:,} positions{replay}, lr {rc['lr']:g}, {rc['epochs']} epochs")
             cand = train(state, rnd)
-            if cand:
+            if cand == "same":
+                # Nothing to test: wait for half as much data again.
+                r.setdefault("tests", []).append({"name": f"rl{rnd}-try{r['tries']}", "decision": "no-gain", "elo": None,
+                                                  "games": 0, "positions": r["positions"]})
+                r["next_try_at"] = int(r["positions"] * 1.5)
+                log(f"round {rnd}: no epoch beat the champion on held-out games; next try at {r['next_try_at']:,} positions")
+            elif cand:
                 name = queue_sprt(state, rnd, cand)
                 r["pending"] = {"name": name, "cand": cand, "positions": r["positions"]}
                 log(f"round {rnd}: queued SPRT {name}")
