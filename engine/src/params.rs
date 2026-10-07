@@ -132,4 +132,6 @@ tunables! {
     corr_major: 0, 0, 256;        // eval correction by the rooks and queens of both sides (0 = off)
     corr_cont2: 0, 0, 256;        // eval correction by the last two moves together (0 = off)
     qs_evasion_see: 0, 0, 1;      // quiescence in check: once an evasion has saved the position, skip evasions that lose material
+    mat_scale: 0, 0, 1;           // scale the network's evaluation by (base + material) / 32768, material = 450 per minor, 650 per rook, 1250 per queen
+    mat_scale_base: 26500, 16000, 32768;
 }

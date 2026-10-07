@@ -248,6 +248,14 @@ impl Searcher {
             Some(acc) => acc.evaluate(pos, ply),
             None => eval::evaluate(pos),
         };
+        // Fewer pieces, less certain evaluations: scale toward zero as material comes off.
+        let raw = if p::mat_scale() != 0 {
+            let count = |pt: PieceType| pos.type_bb(pt).count_ones() as i32;
+            let material = 450 * (count(PieceType::Knight) + count(PieceType::Bishop)) + 650 * count(PieceType::Rook) + 1250 * count(PieceType::Queen);
+            raw * (p::mat_scale_base() + material) / 32768
+        } else {
+            raw
+        };
         // Damp evaluations as the fifty-move counter grows.
         let raw = raw * (200 - pos.halfmove_clock() as i32) / 200;
         let raw = if p::mopup() != 0 { eval::mop_up(pos, raw) } else { raw };
