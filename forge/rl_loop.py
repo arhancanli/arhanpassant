@@ -153,7 +153,7 @@ def recipe(state):
     """Training settings, overridable in state.json ("recipe"). A fine-tune of a
     converged network needs a low learning rate: at 1e-4 a fresh optimizer knocks
     it off its optimum and no epoch beats the starting network (round 6, 10-07)."""
-    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 0}
+    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 1}
     r.update(state.get("recipe", {}))
     return r
 
