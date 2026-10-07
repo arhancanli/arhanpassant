@@ -730,7 +730,8 @@ impl Searcher {
 
         // Internal iterative reduction.
         if depth >= 4 && tt_move.is_null() && excluded.is_null() && (PV || cut_node || p::iir_all() != 0) {
-            depth -= 1;
+            depth -= 1 + if PV { p::iir_pv() } else { 0 };
+            depth = depth.max(1);
         }
 
         // The threat map is computed when the first quiet move needs it
@@ -903,7 +904,7 @@ impl Searcher {
                         r -= (tt_score > alpha) as i32 + (p::lmr_ttpv() >= 2 && e.depth >= depth) as i32;
                     }
                     if cut_node {
-                        r += 1;
+                        r += p::lmr_cut();
                     }
                     if p::lmr_ttcap() != 0 && is_quiet && tt_move.is_noisy() {
                         r += 1;
@@ -929,6 +930,11 @@ impl Searcher {
                     }
                     if new_depth > reduced {
                         s = -self.search::<false>(&child, -alpha - 1, -alpha, new_depth, ply + 1, !cut_node);
+                        // The full-depth verdict on a reduced quiet move teaches its continuation history.
+                        if p::post_lmr() != 0 && is_quiet && !self.stopped {
+                            let b = if s >= beta { Self::hist_bonus(new_depth) } else { -Self::hist_malus(new_depth) };
+                            self.history.update_cont(&qctx, piece, m.to(), b);
+                        }
                     }
                 }
                 if PV && s > alpha && s < beta {

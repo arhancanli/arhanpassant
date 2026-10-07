@@ -187,6 +187,15 @@ impl History {
         self.capture[piece.idx()][to as usize][victim.idx()] as i32
     }
 
+    /// Continuation histories only (after a reduced search was re-searched: `post_lmr`).
+    pub fn update_cont(&mut self, q: &QuietCtx, piece: Piece, to: Square, bonus: i32) {
+        for c in [q.c1, q.c2, q.c4] {
+            if c.piece != 12 {
+                gravity(&mut self.cont[c.piece as usize][c.to as usize][piece.idx()][to as usize], bonus);
+            }
+        }
+    }
+
     /// Butterfly history only, for the opponent's previous move.
     pub fn update_butterfly(&mut self, q: &QuietCtx, m: Move, bonus: i32) {
         let (ft, tt) = (((q.threats >> m.from()) & 1) as usize, ((q.threats >> m.to()) & 1) as usize);

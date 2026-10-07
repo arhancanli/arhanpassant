@@ -126,4 +126,7 @@ tunables! {
     iir_all: 0, 0, 1;             // internal iterative reduction at every node type, not only PV and expected cut nodes
     low_ply: 0, 0, 256;           // quiet ordering: history of moves at the first four plies of this search, weight in 16ths (0 = off)
     dext_limit: 0, 0, 16;         // at most this many double or triple extensions on the path from the root (0 = no limit)
+    iir_pv: 0, 0, 3;              // PV nodes without a table move reduce this many plies more than other nodes (internal iterative reduction)
+    lmr_cut: 1, 0, 3;             // extra reduction at expected cut nodes
+    post_lmr: 0, 0, 1;            // after a reduced quiet move is re-searched at full depth, its continuation history learns the result
 }
