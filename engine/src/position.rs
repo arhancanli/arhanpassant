@@ -6,17 +6,32 @@ use std::fmt;
 
 pub const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
-/// Castling rights that survive a move touching a square.
-const CASTLE_KEEP: [u8; 64] = {
-    let mut m = [0xFu8; 64];
-    m[0] = !castle::WQ & 0xF; // a1
-    m[7] = !castle::WK & 0xF; // h1
-    m[4] = !(castle::WK | castle::WQ) & 0xF; // e1
-    m[56] = !castle::BQ & 0xF; // a8
-    m[63] = !castle::BK & 0xF; // h8
-    m[60] = !(castle::BK | castle::BQ) & 0xF; // e8
-    m
-};
+/// Castling rook squares of standard chess (h1, a1, h8, a8).
+const STANDARD_ROOKS: [Square; 4] = [7, 0, 63, 56];
+
+/// Index of a castling right bit (WK 0, WQ 1, BK 2, BQ 3).
+#[inline(always)]
+const fn right_index(right: u8) -> usize {
+    right.trailing_zeros() as usize
+}
+
+/// The castling right a castling move uses.
+#[inline(always)]
+pub fn castle_right(us: Color, king_side: bool) -> u8 {
+    match (us, king_side) {
+        (Color::White, true) => castle::WK,
+        (Color::White, false) => castle::WQ,
+        (Color::Black, true) => castle::BK,
+        (Color::Black, false) => castle::BQ,
+    }
+}
+
+/// King and rook destination squares of a castling move (the same as in standard chess).
+#[inline(always)]
+pub fn castle_targets(us: Color, king_side: bool) -> (Square, Square) {
+    let base = if us == Color::White { 0 } else { 56 };
+    if king_side { (base + 6, base + 5) } else { (base + 2, base + 3) }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -25,6 +40,10 @@ pub struct Position {
     board: [Piece; 64],
     stm: Color,
     castling: u8,
+    /// Rook squares the castling rights refer to, indexed like the right bits
+    /// (white king side, white queen side, black king side, black queen side).
+    /// Standard chess: h1, a1, h8, a8; Chess960 puts them anywhere on the back rank.
+    castle_rook: [Square; 4],
     ep: Square,
     halfmove: u16,
     fullmove: u16,
@@ -67,6 +86,7 @@ impl Position {
             board: [Piece::NONE; 64],
             stm: Color::White,
             castling: 0,
+            castle_rook: STANDARD_ROOKS,
             ep: NO_SQUARE,
             halfmove: 0,
             fullmove: 1,
@@ -110,6 +130,24 @@ impl Position {
     #[inline(always)]
     pub fn castling_rights(&self) -> u8 {
         self.castling
+    }
+
+    /// The square of the rook that castling `right` moves.
+    #[inline(always)]
+    pub fn castle_rook(&self, right: u8) -> Square {
+        self.castle_rook[right_index(right)]
+    }
+
+    /// All four castling rook squares (white king side, white queen side, black king side, black queen side).
+    #[inline(always)]
+    pub fn castle_rooks(&self) -> [Square; 4] {
+        self.castle_rook
+    }
+
+    /// True when the castling rooks or kings stand where standard chess cannot have them.
+    pub fn is_chess960(&self) -> bool {
+        let king_home = |c: Color, sq: Square| self.castling & (castle_right(c, true) | castle_right(c, false)) == 0 || self.king_sq(c) == sq;
+        self.castle_rook != STANDARD_ROOKS || !king_home(Color::White, 4) || !king_home(Color::Black, 60)
     }
 
     #[inline(always)]
@@ -288,6 +326,33 @@ impl Position {
             self.halfmove = 0;
         }
 
+        // Rights a move keeps: a king move ends both of its side's rights, and a move
+        // from or to a castling rook's square ends that rook's right.
+        let mut keep = 0xFu8;
+        if self.castling != 0 {
+            for (i, &r) in self.castle_rook.iter().enumerate() {
+                if r == from || r == to {
+                    keep &= !(1u8 << i);
+                }
+            }
+            if self.board[from as usize].piece_type() == PieceType::King {
+                keep &= !(castle_right(us, true) | castle_right(us, false));
+            }
+        }
+
+        if m.is_castle() {
+            // Lift both pieces first: in Chess960 a destination can be the other piece's start square.
+            let king_side = flags == flag::KING_CASTLE;
+            let rook_from = self.castle_rook(castle_right(us, king_side));
+            let (_, rook_to) = castle_targets(us, king_side);
+            let king = self.remove(from);
+            let rook = self.remove(rook_from);
+            self.put(king, to);
+            self.put(rook, rook_to);
+            self.finish_move(us, them, keep);
+            return;
+        }
+
         let piece = self.remove(from);
         debug_assert_eq!(piece.color(), us);
         let placed = match m.promotion() {
@@ -307,19 +372,15 @@ impl Position {
                     }
                 }
             }
-            PieceType::King => {
-                if flags == flag::KING_CASTLE {
-                    let rook = self.remove(from + 3);
-                    self.put(rook, from + 1);
-                } else if flags == flag::QUEEN_CASTLE {
-                    let rook = self.remove(from - 4);
-                    self.put(rook, from - 1);
-                }
-            }
             _ => {}
         }
+        self.finish_move(us, them, keep);
+    }
 
-        self.castling &= CASTLE_KEEP[from as usize] & CASTLE_KEEP[to as usize];
+    /// End of `play`: update castling rights, move counters, side to move and check info.
+    #[inline(always)]
+    fn finish_move(&mut self, us: Color, them: Color, keep: u8) {
+        self.castling &= keep;
         self.hash ^= ZOBRIST_CASTLING[self.castling as usize];
         if us == Color::Black {
             self.fullmove += 1;
@@ -396,7 +457,15 @@ impl Position {
 
     // ----- FEN -------------------------------------------------------------
 
+    /// Parse a standard-chess FEN (see [`Position::from_fen_mode`]).
     pub fn from_fen(fen: &str) -> Result<Position, FenError> {
+        Position::from_fen_mode(fen, false)
+    }
+
+    /// Parse a FEN. With `chess960`, castling rights may name any rook on the back
+    /// rank: X-FEN (`KQkq` for the outermost rook) or Shredder-FEN (`HAha`, the rook's
+    /// file). Without it, a right needs the king on e1/e8 and the rook in its corner.
+    pub fn from_fen_mode(fen: &str, chess960: bool) -> Result<Position, FenError> {
         let err = |s: &str| Err(FenError(s.to_string()));
         let mut parts = fen.split_whitespace();
         let placement = match parts.next() {
@@ -445,16 +514,8 @@ impl Position {
         };
 
         let castling = parts.next().unwrap_or("-");
-        if castling != "-" {
-            for c in castling.chars() {
-                pos.castling |= match c {
-                    'K' => castle::WK,
-                    'Q' => castle::WQ,
-                    'k' => castle::BK,
-                    'q' => castle::BQ,
-                    _ => return err("bad castling field"),
-                };
-            }
+        if castling != "-" && castling.chars().any(|c| !matches!(c, 'K' | 'Q' | 'k' | 'q' | 'A'..='H' | 'a'..='h')) {
+            return err("bad castling field");
         }
 
         let ep = parts.next().unwrap_or("-");
@@ -483,28 +544,39 @@ impl Position {
         if pos.pieces[0] & (RANK_1 | RANK_8) != 0 {
             return err("pawns on the first or last rank");
         }
-        // Drop castling rights that the placement cannot support.
-        let has = |c: Color, pt: PieceType, sq: Square| pos.board[sq as usize] == Piece::new(c, pt);
-        let mut rights = pos.castling;
-        if !has(Color::White, PieceType::King, 4) {
-            rights &= !(castle::WK | castle::WQ);
+        // Castling rights, kept only where the placement supports them.
+        if castling != "-" {
+            for c in castling.chars() {
+                let color = if c.is_ascii_uppercase() { Color::White } else { Color::Black };
+                let base = if color == Color::White { 0u8 } else { 56 };
+                let ksq = pos.king_sq(color);
+                if rank_of(ksq) != rank_of(base) {
+                    continue;
+                }
+                let rook = Piece::new(color, PieceType::Rook);
+                let rook_files: Vec<u8> = (0..8).filter(|&f| pos.board[(base + f) as usize] == rook).collect();
+                let kf = file_of(ksq);
+                let rook_file = match c.to_ascii_uppercase() {
+                    // X-FEN: the outermost rook on that side.
+                    'K' => rook_files.iter().copied().filter(|&f| f > kf).max(),
+                    'Q' => rook_files.iter().copied().filter(|&f| f < kf).min(),
+                    // Shredder-FEN: the rook on this file.
+                    l => Some(l as u8 - b'A').filter(|f| rook_files.contains(f)),
+                };
+                let Some(rf) = rook_file else { continue };
+                if rf == kf {
+                    continue;
+                }
+                let king_side = rf > kf;
+                // Standard chess: only the king on e1/e8 with the rook in its corner.
+                if !chess960 && (kf != 4 || rf != if king_side { 7 } else { 0 }) {
+                    continue;
+                }
+                let right = castle_right(color, king_side);
+                pos.castling |= right;
+                pos.castle_rook[right_index(right)] = base + rf;
+            }
         }
-        if !has(Color::White, PieceType::Rook, 7) {
-            rights &= !castle::WK;
-        }
-        if !has(Color::White, PieceType::Rook, 0) {
-            rights &= !castle::WQ;
-        }
-        if !has(Color::Black, PieceType::King, 60) {
-            rights &= !(castle::BK | castle::BQ);
-        }
-        if !has(Color::Black, PieceType::Rook, 63) {
-            rights &= !castle::BK;
-        }
-        if !has(Color::Black, PieceType::Rook, 56) {
-            rights &= !castle::BQ;
-        }
-        pos.castling = rights;
         // Keep an en-passant square only when a capture onto it is possible.
         if pos.ep != NO_SQUARE {
             let us = pos.stm;
@@ -557,9 +629,15 @@ impl Position {
         if self.castling == 0 {
             s.push('-');
         } else {
+            let shredder = self.is_chess960();
             for (bit, c) in [(castle::WK, 'K'), (castle::WQ, 'Q'), (castle::BK, 'k'), (castle::BQ, 'q')] {
                 if self.castling & bit != 0 {
-                    s.push(c);
+                    if shredder {
+                        let file = (b'a' + file_of(self.castle_rook(bit))) as char;
+                        s.push(if c.is_ascii_uppercase() { file.to_ascii_uppercase() } else { file });
+                    } else {
+                        s.push(c);
+                    }
                 }
             }
         }

@@ -1,7 +1,7 @@
 //! Legal move generation using check and pin masks.
 
 use crate::bitboard::*;
-use crate::position::Position;
+use crate::position::{castle_right, castle_targets, Position};
 use crate::types::*;
 use std::mem::MaybeUninit;
 
@@ -244,28 +244,51 @@ pub fn generate(pos: &Position, kind_mask: u8, list: &mut MoveList) {
         }
     }
 
-    // Castling.
-    if quiet && checkers == 0 {
-        let rights = pos.castling_rights();
-        let (k_right, q_right, base) = match us {
-            Color::White => (castle::WK, castle::WQ, 0u8),
-            Color::Black => (castle::BK, castle::BQ, 56u8),
-        };
-        if rights & k_right != 0
-            && occ & (bb(base + 5) | bb(base + 6)) == 0
-            && !pos.is_attacked_by(base + 5, them, occ)
-            && !pos.is_attacked_by(base + 6, them, occ)
-        {
-            list.push(Move::new(base + 4, base + 6, flag::KING_CASTLE));
-        }
-        if rights & q_right != 0
-            && occ & (bb(base + 1) | bb(base + 2) | bb(base + 3)) == 0
-            && !pos.is_attacked_by(base + 3, them, occ)
-            && !pos.is_attacked_by(base + 2, them, occ)
-        {
-            list.push(Move::new(base + 4, base + 2, flag::QUEEN_CASTLE));
+    // Castling (standard chess and Chess960).
+    if quiet && checkers == 0 && pos.castling_rights() != 0 {
+        for king_side in [true, false] {
+            if castle_ok(pos, us, them, occ, king_side) {
+                let (kto, _) = castle_targets(us, king_side);
+                let fl = if king_side { flag::KING_CASTLE } else { flag::QUEEN_CASTLE };
+                list.push(Move::new(pos.king_sq(us), kto, fl));
+            }
         }
     }
+}
+
+/// Squares from `a` to `b` on one rank, both included.
+#[inline(always)]
+fn rank_span(a: Square, b: Square) -> Bitboard {
+    let (lo, hi) = (a.min(b), a.max(b));
+    (u64::MAX >> (63 - hi)) & (u64::MAX << lo)
+}
+
+/// Can `us` castle on this side now (not in check is the caller's business)? The
+/// squares the king and rook cross must be empty apart from those two pieces, the
+/// squares the king crosses and lands on must not be attacked, and the rook must
+/// not be shielding the king (possible in Chess960).
+#[inline]
+fn castle_ok(pos: &Position, us: Color, them: Color, occ: Bitboard, king_side: bool) -> bool {
+    let right = castle_right(us, king_side);
+    if pos.castling_rights() & right == 0 {
+        return false;
+    }
+    let ksq = pos.king_sq(us);
+    let rsq = pos.castle_rook(right);
+    let (kto, rto) = castle_targets(us, king_side);
+    let movers = bb(ksq) | bb(rsq);
+    if occ & (rank_span(ksq, kto) | rank_span(rsq, rto)) & !movers != 0 {
+        return false;
+    }
+    let mut path = rank_span(ksq, kto) & !bb(ksq);
+    while path != 0 {
+        let sq = lsb(path);
+        path &= path - 1;
+        if pos.is_attacked_by(sq, them, occ) {
+            return false;
+        }
+    }
+    pos.pinned() & bb(rsq) == 0
 }
 
 impl Position {
@@ -310,30 +333,8 @@ impl Position {
         let checkers = self.checkers();
         if pt == PieceType::King {
             if m.is_castle() {
-                if checkers != 0 {
-                    return false;
-                }
-                let (k_right, q_right, base) = match us {
-                    Color::White => (castle::WK, castle::WQ, 0u8),
-                    Color::Black => (castle::BK, castle::BQ, 56u8),
-                };
-                if from != base + 4 {
-                    return false;
-                }
-                let rights = self.castling_rights();
-                return if fl == flag::KING_CASTLE {
-                    to == base + 6
-                        && rights & k_right != 0
-                        && occ & (bb(base + 5) | bb(base + 6)) == 0
-                        && !self.is_attacked_by(base + 5, them, occ)
-                        && !self.is_attacked_by(base + 6, them, occ)
-                } else {
-                    to == base + 2
-                        && rights & q_right != 0
-                        && occ & (bb(base + 1) | bb(base + 2) | bb(base + 3)) == 0
-                        && !self.is_attacked_by(base + 3, them, occ)
-                        && !self.is_attacked_by(base + 2, them, occ)
-                };
+                let king_side = fl == flag::KING_CASTLE;
+                return checkers == 0 && from == ksq && to == castle_targets(us, king_side).0 && castle_ok(self, us, them, occ, king_side);
             }
             if fl != flag::QUIET && fl != flag::CAPTURE {
                 return false;
@@ -429,19 +430,31 @@ impl Position {
 
     /// Parse a move in UCI notation (`e2e4`, `e7e8q`; castling as `e1g1` or `e1h1`).
     pub fn parse_uci_move(&self, s: &str) -> Option<Move> {
+        self.parse_uci_move_mode(s, false)
+    }
+
+    /// Parse a move in UCI notation. In Chess960 mode castling is only king-takes-rook
+    /// (`f1h1`), since `f1g1` may be a plain king move; otherwise both forms are accepted.
+    pub fn parse_uci_move_mode(&self, s: &str, chess960: bool) -> Option<Move> {
         let s = s.trim();
         let legal = self.legal_moves();
-        if let Some(m) = legal.iter().find(|m| m.to_uci() == s) {
+        if let Some(m) = legal.iter().find(|m| !(chess960 && m.is_castle()) && m.to_uci() == s) {
             return Some(m);
         }
         // King-takes-rook castling notation.
-        let castle = legal.iter().find(|m| {
-            m.is_castle() && {
-                let rook_from = if m.flags() == flag::KING_CASTLE { m.from() + 3 } else { m.from() - 4 };
-                format!("{}{}", square_name(m.from()), square_name(rook_from)) == s
-            }
-        });
+        let castle = legal.iter().find(|m| m.is_castle() && self.uci_move(*m, true) == s);
         castle
+    }
+
+    /// UCI text of a move. In Chess960 mode castling is written king-takes-rook.
+    pub fn uci_move(&self, m: Move, chess960: bool) -> String {
+        if chess960 && m.is_castle() {
+            let us = if m.from() < 8 { Color::White } else { Color::Black };
+            let rook = self.castle_rook(castle_right(us, m.flags() == flag::KING_CASTLE));
+            format!("{}{}", square_name(m.from()), square_name(rook))
+        } else {
+            m.to_uci()
+        }
     }
 }
 

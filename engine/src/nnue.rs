@@ -439,7 +439,9 @@ impl Accumulators {
             sub[1] = (parent.piece_on(cap_sq), cap_sq);
             n_sub = 2;
         } else if m.is_castle() {
-            let (rf, rt) = if m.flags() == flag::KING_CASTLE { (m.from() + 3, m.from() + 1) } else { (m.from() - 4, m.from() - 1) };
+            let king_side = m.flags() == flag::KING_CASTLE;
+            let rf = parent.castle_rook(crate::position::castle_right(us, king_side));
+            let (_, rt) = crate::position::castle_targets(us, king_side);
             let rook = Piece::new(us, PieceType::Rook);
             sub[1] = (rook, rf);
             add[1] = (rook, rt);

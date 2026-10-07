@@ -15,8 +15,13 @@ pub const NAME: &str = "ArhanPassant";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn info_line(info: &SearchInfo) -> String {
+    info_line_mode(info, None)
+}
+
+/// An `info` line; with a position and Chess960 on, castling moves print king-takes-rook.
+pub fn info_line_mode(info: &SearchInfo, chess960: Option<&Position>) -> String {
     let nps = info.nodes * 1000 / info.time_ms.max(1);
-    let pv: Vec<String> = info.pv.iter().map(|m| m.to_uci()).collect();
+    let pv: Vec<String> = info.pv.iter().map(|&m| chess960.map_or_else(|| m.to_uci(), |p| p.uci_move(m, true))).collect();
     format!(
         "info depth {} seldepth {} score {} nodes {} nps {} hashfull {} time {} pv {}",
         info.depth,
@@ -37,6 +42,8 @@ struct Running {
 
 pub struct Uci {
     pos: Position,
+    /// UCI_Chess960: castling is sent and received king-takes-rook, FENs may name any rook.
+    chess960: bool,
     history: Vec<u64>,
     searchers: Vec<Searcher>,
     running: Option<Running>,
@@ -59,6 +66,7 @@ impl Uci {
         let network = Network::embedded().map(Arc::new);
         let mut u = Uci {
             pos: Position::startpos(),
+            chess960: false,
             history: Vec::new(),
             searchers: Vec::new(),
             running: None,
@@ -126,6 +134,7 @@ impl Uci {
                 println!("option name Ponder type check default false");
                 println!("option name SyzygyPath type string default <empty>");
                 println!("option name SyzygyProbeLimit type spin default 7 min 0 max 7");
+                println!("option name UCI_Chess960 type check default false");
                 println!("uciok");
             }
             "isready" => println!("readyok"),
@@ -246,6 +255,7 @@ impl Uci {
             }
             // Pondering needs no setting: the GUI decides with `go ponder`.
             "ponder" => {}
+            "uci_chess960" => self.chess960 = value.eq_ignore_ascii_case("true"),
             "clear hash" => {
                 if let Some(s) = self.searchers.first() {
                     s.shared.tt.clear();
@@ -265,13 +275,13 @@ impl Uci {
         let spec = &t[..moves_at.unwrap_or(t.len())];
         let mut pos = match spec.first() {
             Some(&"startpos") => Position::from_fen(START_FEN).unwrap(),
-            Some(&"fen") => Position::from_fen(&spec[1..].join(" ")).map_err(|e| e.to_string())?,
+            Some(&"fen") => Position::from_fen_mode(&spec[1..].join(" "), self.chess960).map_err(|e| e.to_string())?,
             _ => return Err("expected startpos or fen".into()),
         };
         let mut history = vec![pos.hash()];
         if let Some(i) = moves_at {
             for s in &t[i + 1..] {
-                let m = pos.parse_uci_move(s).ok_or_else(|| format!("illegal move {s}"))?;
+                let m = pos.parse_uci_move_mode(s, self.chess960).ok_or_else(|| format!("illegal move {s}"))?;
                 pos.play(m);
                 history.push(pos.hash());
             }
@@ -315,6 +325,7 @@ impl Uci {
             i += 1;
         }
         let pos = self.pos;
+        let chess960 = self.chess960;
         let history = self.history.clone();
         let overhead = self.move_overhead;
         let mut searchers = std::mem::take(&mut self.searchers);
@@ -326,7 +337,7 @@ impl Uci {
             .stack_size(64 << 20)
             .spawn(move || {
                 let mut report = |info: &SearchInfo| {
-                    println!("{}", info_line(info));
+                    println!("{}", info_line_mode(info, chess960.then_some(&pos)));
                 };
                 let result = search_threads_prepared(&mut searchers, &pos, &history, &limits, overhead, &mut report);
                 // For `go infinite`, hold the answer until the GUI says stop; for `go ponder`,
@@ -337,10 +348,10 @@ impl Uci {
                 }
                 // Name the expected reply so the GUI can ponder on it.
                 match result.pv.get(1) {
-                    Some(reply) if result.pv[0] == result.best_move => {
-                        println!("bestmove {} ponder {}", result.best_move.to_uci(), reply.to_uci())
+                    Some(&reply) if result.pv[0] == result.best_move => {
+                        println!("bestmove {} ponder {}", pos.uci_move(result.best_move, chess960), pos.uci_move(reply, chess960))
                     }
-                    _ => println!("bestmove {}", result.best_move.to_uci()),
+                    _ => println!("bestmove {}", pos.uci_move(result.best_move, chess960)),
                 }
                 io::stdout().flush().ok();
                 searchers
