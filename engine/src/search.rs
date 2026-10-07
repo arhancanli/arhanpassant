@@ -788,7 +788,7 @@ impl Searcher {
                     if !in_check && p::hist_prune() > 0 && lmr_depth <= 4 && hist < -p::hist_prune() * (lmr_depth + 1) {
                         continue;
                     }
-                    if !see_ge(pos, m, -p::see_quiet() * lmr_depth) {
+                    if !see_ge(pos, m, -p::see_quiet() * lmr_depth) && !(p::see_q_check() != 0 && pos.gives_check(m)) {
                         continue;
                     }
                 } else {

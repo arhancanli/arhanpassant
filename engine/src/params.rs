@@ -112,6 +112,7 @@ tunables! {
     cap_fut: 250, 0, 800;           // capture futility base margin at reduced depth < 7 (0 = off)
     see_capt_hist: 0, 0, 512;     // capture SEE pruning threshold loosened by capture history / this (0 = off)
     smp_skip: 0, 0, 1;            // helper threads stagger their iteration depths
+    see_q_check: 0, 0, 1;         // quiet SEE pruning spares moves that give check (sacrifices with check)
     w_butterfly: 64, 16, 160;     // quiet history weights in 64ths: butterfly,
     w_pawn: 64, 0, 160;           //   pawn structure,
     w_cont1: 64, 16, 160;         //   one-ply continuation,
