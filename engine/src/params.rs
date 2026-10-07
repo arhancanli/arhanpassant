@@ -100,16 +100,16 @@ tunables! {
     tm_falling: 0, 0, 4000;       // time: scale the soft limit by how far the score fell / this (0 = off)
     see_eval: 190, 100, 300;      // evaluation units per 100 SEE units (a pawn): converts margins between the two
     qs_lmp: 0, 0, 8;              // quiescence: after this many moves, skip captures that are not recaptures, checks or promotions (0 = off)
-    corr_minor: 0, 0, 256;        // eval correction by the knights and bishops of both sides (0 = off)
+    corr_minor: 128, 0, 256;        // eval correction by the knights and bishops of both sides (0 = off)
     draw_jitter: 0, 0, 1;         // search draws score -1 or +1 by node count
     mvv_mult: 16, 4, 40;          // capture ordering: weight of the captured piece's value against capture history
     hindsight: 0, 0, 600;         // reduced node: +1 ply if the opponent's position did not worsen, -1 if both evals sum above this (0 = off)
     lmr_corr: 0, 0, 1000;         // reduce less by |eval correction| / this (0 = off)
     lmr_pv: 0, 0, 1;              // reduce late moves from the second move at PV nodes too (not the root)
-    upcoming_rep: 0, 0, 1;        // a side that can force a repetition scores at least a draw (cuckoo tables)
+    upcoming_rep: 1, 0, 1;        // a side that can force a repetition scores at least a draw (cuckoo tables)
     tt_cut_node: 0, 0, 1;         // table cutoffs at depth <= 5 only where the node type agrees with the bound
     nmp_cutnode: 0, 0, 1;         // null-move pruning only at expected cut nodes
-    cap_fut: 0, 0, 800;           // capture futility base margin at reduced depth < 7 (0 = off)
+    cap_fut: 250, 0, 800;           // capture futility base margin at reduced depth < 7 (0 = off)
     see_capt_hist: 0, 0, 512;     // capture SEE pruning threshold loosened by capture history / this (0 = off)
     smp_skip: 0, 0, 1;            // helper threads stagger their iteration depths
     w_butterfly: 64, 16, 160;     // quiet history weights in 64ths: butterfly,
