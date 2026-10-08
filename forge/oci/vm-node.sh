@@ -17,9 +17,10 @@ cd src && git fetch --depth 50 origin "$BRANCH" && git checkout -q -B run "origi
 REV=$(git rev-parse --short HEAD)
 cargo build --release -p arhanpassant -p arhanpassant-arena >> ~/build.log 2>&1 || { log "build failed at $REV"; sleep 600; exit 1; }
 cp target/release/arhanpassant ~/ap-$REV && cp target/release/arena ~/arena 2>/dev/null
-# Use the profile-guided build of the same code when it builds and searches identically (same bench nodes).
+# With a file ~/PGO, use the profile-guided build of the same code when it builds and searches identically (same
+# bench nodes). Opt-in per machine: +4% on the Mac (ARM) but -2.5% on an AMD E5 VM with the baseline x86-64 build.
 # It is built as ~/pgo-$REV, outside the ~/ap-* names that the bot and the test runner pick up.
-if bash forge/pgo_build.sh ~/pgo-$REV >> ~/build.log 2>&1 \
+if [ -e ~/PGO ] && bash forge/pgo_build.sh ~/pgo-$REV >> ~/build.log 2>&1 \
    && [ "$(~/pgo-$REV bench 2>&1 | tail -1 | awk '{print $1}')" = "$(~/ap-$REV bench 2>&1 | tail -1 | awk '{print $1}')" ]; then
   mv ~/pgo-$REV ~/ap-$REV
   log "built $REV (profile-guided)"
