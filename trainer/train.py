@@ -316,6 +316,82 @@ def load_nnue_into(net, path):
         sys.exit(f"{path}: size mismatch")
 
 
+def engine_copy(net):
+    """`net` with every layer rounded as export writes it: the evaluation the engine computes."""
+    q = Net(net.hidden)
+    with torch.no_grad():
+        q.ft.weight.copy_(torch.round(net.merged_ft_weight().detach().cpu() * QA).clamp(-32768, 32767) / QA)
+        q.ft_bias.copy_(torch.round(net.ft_bias.detach().cpu() * QA).clamp(-32768, 32767) / QA)
+        q.out.weight.copy_(torch.round(net.out.weight.detach().cpu() * QB).clamp(-32768, 32767) / QB)
+        q.out.bias.copy_(torch.round(net.out.bias.detach().cpu() * QA * QB) / (QA * QB))
+    return q
+
+
+def gptq_output(net, data, device, positions, damp=0.01, seed=7):
+    """Output weights rounded to the engine grid with GPTQ (Frantar et al. 2022) instead of to nearest, and biases
+    that absorb each bucket's remaining mean error.
+
+    Rounding to nearest costs more than the whole feature layer's rounding: with QB = 64 it adds several centipawns
+    of noise per position and a fixed offset per bucket. For each bucket, H = E[x x^T] over training positions in
+    that bucket (x: the squared activations as the engine computes them); weights are rounded one at a time, most
+    active input first, and each rounding error is pushed onto the weights not yet rounded through H^-1, so the
+    rounded layer reproduces the float layer's output on typical positions rather than weight by weight.
+    """
+    q = engine_copy(net).to(device).eval()
+    d, nb = 2 * net.hidden, LAYOUT["output_buckets"]
+    H = torch.zeros(nb, d, d, device=device)
+    S = torch.zeros(nb, d, device=device)
+    N = torch.zeros(nb, device=device)
+    seen = 0
+    with torch.no_grad():
+        for b, dec in data.batches(data.train_blocks, 16384, np.random.default_rng(seed)):
+            (stm, nstm, offsets, bucket), _, _ = to_inputs(dec, device)
+            x = torch.cat([torch.clamp(q.accumulate(stm, offsets), 0.0, 1.0).pow(2),
+                           torch.clamp(q.accumulate(nstm, offsets), 0.0, 1.0).pow(2)], dim=1)
+            for k in range(nb):
+                xk = x[bucket == k]
+                if len(xk):
+                    H[k] += xk.T @ xk
+                    S[k] += xk.sum(0)
+                    N[k] += len(xk)
+            seen += b
+            if seen >= positions:
+                break
+    H, S, N = H.cpu().double(), S.cpu().double(), N.cpu().double()
+    w_float = net.out.weight.detach().cpu().double()
+    Q = torch.zeros_like(w_float)
+    for k in range(nb):
+        Hk = H[k] / max(float(N[k]), 1.0)
+        diag = torch.diagonal(Hk).clone()
+        Hk = Hk + torch.eye(d, dtype=torch.float64) * (damp * float(diag.mean()) + 1e-12)
+        order = torch.argsort(diag, descending=True)
+        U = torch.linalg.cholesky(torch.cholesky_inverse(torch.linalg.cholesky(Hk[order][:, order])), upper=True)
+        w = w_float[k][order].clone()
+        qk = torch.zeros(d, dtype=torch.float64)
+        for i in range(d):
+            qk[i] = torch.clamp(torch.round(w[i] * QB), -127, 127) / QB
+            w[i + 1:] -= (w[i] - qk[i]) / U[i, i] * U[i, i + 1:]
+        Q[k][order] = qk
+        dead = diag == 0  # never active here: nothing to compensate, round to nearest
+        Q[k][dead] = torch.clamp(torch.round(w_float[k][dead] * QB), -127, 127) / QB
+    mean_x = S / N.clamp(min=1).unsqueeze(1)
+    bias = net.out.bias.detach().cpu().double() - ((Q - w_float) * mean_x).sum(1)
+    return Q.float(), bias.float()
+
+
+def held_out_loss(model, vdata, batch, workers, device, wdl, power):
+    model.eval()
+    tot, n = 0.0, 0
+    with torch.no_grad():
+        for b, dec in vdata.batches(vdata.val_blocks, batch, workers=workers):
+            inputs, score, result = to_inputs(dec, device)
+            pred = torch.sigmoid(model(*inputs))
+            target = (1 - wdl) * torch.sigmoid(score / SCALE) + wdl * result
+            tot += float(torch.mean(torch.abs(pred - target) ** power)) * b
+            n += b
+    return tot / n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", nargs="+", required=True)
@@ -344,6 +420,9 @@ def main():
     ap.add_argument("--val-data", nargs="+", help="validate on every record of these files instead of the held-out blocks "
                     "(a fixed set lets runs on different data be compared; keep these files out of --data)")
     ap.add_argument("--warmup", type=int, default=0, help="steps of linear learning-rate warm-up before the cosine decay")
+    ap.add_argument("--gptq", type=int, default=2_000_000, help="round the kept epoch's output layer with GPTQ, "
+                    "calibrated on this many training positions, when that beats rounding to nearest on the held-out "
+                    "positions (0 = always round to nearest)")
     args = ap.parse_args()
     if bool(args.init_checkpoint) != bool(args.init_network):
         ap.error("--init-checkpoint and --init-network must be supplied together")
@@ -459,6 +538,20 @@ def main():
             best_epoch = epoch
             export(net, args.out)
             torch.save(net.state_dict(), args.out + ".pt")
+    if args.gptq and best_epoch > 0:
+        # The kept epoch, rounded for the engine two ways: to nearest (written above) or with GPTQ.
+        net.load_state_dict(torch.load(args.out + ".pt", map_location=device, weights_only=True))
+        w, b = gptq_output(net, data, device, args.gptq)
+        tuned = engine_copy(net)
+        with torch.no_grad():
+            tuned.out.weight.copy_(w)
+            tuned.out.bias.copy_(torch.round(b * QA * QB) / (QA * QB))
+        losses = [held_out_loss(m.to(device), vdata, args.batch, args.workers, device, args.wdl, args.power)
+                  for m in (engine_copy(net), tuned)]
+        print(f"engine rounding on held-out positions: nearest {losses[0]:.6f}, gptq {losses[1]:.6f}", flush=True)
+        if losses[1] < losses[0]:
+            export(tuned.cpu(), args.out)
+            print("exported with gptq output rounding", flush=True)
     if initialization is not None:
         initialize.verify_sources(initialization)
         initialization.update(status="complete", epochs_completed=args.epochs, best_epoch=best_epoch,
