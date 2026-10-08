@@ -7,7 +7,9 @@ there are enough, fine-tunes the champion on this round's data (see recipe()
 for the learning rate, epochs and how many earlier rounds are replayed). When no
 epoch beats the champion on held-out games there is nothing to test and the
 round keeps collecting. Otherwise the candidate is tested with an
-SPRT at the front of the Mac test queue; if it passes it becomes the network
+SPRT at the front of the test queue of the fleet's test VM ("test_host" in
+state.json; the Mac's queue without it, or if the VM is unreachable or silent
+for 10 hours); if it passes it becomes the network
 compiled into the engine (commit + push), the Mac self-play restarts on it in
 new round folders, and the fleet VMs rebuild. If it fails, the round keeps
 collecting and tries again with more data.
@@ -193,15 +195,52 @@ def train(state, rnd):
 
 
 def queue_sprt(state, rnd, cand):
+    """Queue the candidate's SPRT; returns (name, host), host None for the Mac.
+
+    With "test_host" in state.json the test runs on that fleet VM (forge/oci/vm-tests.sh, first in its queue), so the
+    Mac keeps all its cores for self-play: a test there at concurrency 14 cut the Mac's self-play to about a third for
+    the hours it ran. Both sides use the VM's newest build, rebuilt from the branch at every promotion."""
     name = f"rl{rnd}-try{state['rounds'][str(rnd)]['tries']}"
+    host = state.get("test_host")
+    if host:
+        try:
+            queue_remote_sprt(host, name, cand, state["champion"])
+            return name, host
+        except Exception as e:  # unreachable VM: test on the Mac instead
+            log(f"round {rnd}: test host {host} unavailable ({str(e)[:120]}); testing on the Mac")
+    queue_mac_sprt(state, name, cand)
+    return name, None
+
+
+def queue_mac_sprt(state, name, cand):
     job = f"{DATA}/elo/queue/000-{name}.sh"
     with open(job, "w") as f:
         f.write(f'B={state["binary"]}\nCAND_OPTS="opt.EvalFile={cand}" BASE_OPTS="opt.EvalFile={state["champion"]}" '
                 f'{DATA}/elo/sprt2.sh {name} $B $B 5+0.05 0 5 14\n')
-    return name
 
 
-def result(name):
+def queue_remote_sprt(host, name, cand, champion):
+    dest = f"ubuntu@{host}"
+    for cmd, kw in [(SSH + [dest, "mkdir -p ~/nets"], {}),
+                    (["scp", *SSH[1:], cand, champion, f"{dest}:nets/"], {}),
+                    (SSH + [dest, f"cat > ~/queue/.000-{name}.tmp && mv ~/queue/.000-{name}.tmp ~/queue/000-{name}.sh"],
+                     {"input": f"# RL loop network test, queued {now():%Y-%m-%dT%H:%M:%SZ}.\n"
+                               f'MAXGAMES=8000 CAND_OPTS="opt.EvalFile=/home/ubuntu/nets/{os.path.basename(cand)}" '
+                               f'BASE_OPTS="opt.EvalFile=/home/ubuntu/nets/{os.path.basename(champion)}" '
+                               f"sprt {name} 5+0.05 0 5\n"})]:
+        r = sh(cmd, timeout=300, **kw)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip() or f"exit {r.returncode}")
+
+
+def result(name, host=None):
+    if host:
+        try:
+            r = sh(SSH + [f"ubuntu@{host}", f"grep -qs '^complete' ~/elo/{name}/run.log && cat ~/elo/{name}/result.json"],
+                   timeout=120)
+        except subprocess.TimeoutExpired:
+            return None
+        return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
     p = f"{DATA}/elo/{name}/result.json"
     if os.path.exists(p) and "complete" in open(f"{DATA}/elo/{name}/run.log").read():
         with open(p) as f:
@@ -246,7 +285,7 @@ def main():
         r["positions"] = positions(round_files(state, rnd))
         pending = r.get("pending")
         if pending:
-            res = result(pending["name"])
+            res = result(pending["name"], pending.get("host"))
             if res:
                 log(f"round {rnd} {pending['name']}: {res['decision']} {res['elo']:+.1f} [{res['elo_lo']:.1f}, {res['elo_hi']:.1f}] {res['games']} games")
                 r.setdefault("tests", []).append({"name": pending["name"], "decision": res["decision"], "elo": res["elo"],
@@ -257,6 +296,11 @@ def main():
                     log(f"promoted round {rnd}; round {rnd + 1} started")
                     continue
                 r["next_try_at"] = int(r["positions"] * 1.5)
+            elif pending.get("host") and now() - parse_time(pending["queued"]) > dt.timedelta(hours=10):
+                # The test VM went quiet (for example the cloud trial ended): run the test here instead.
+                log(f"round {rnd} {pending['name']}: no result from {pending['host']} after 10 h; testing on the Mac")
+                queue_mac_sprt(state, pending["name"], pending["cand"])
+                pending.update(host=None, queued=now().isoformat())
         elif r["positions"] >= max(recipe(state)["threshold"], r.get("next_try_at", 0)):
             r["tries"] += 1
             save(state)
@@ -271,9 +315,10 @@ def main():
                 r["next_try_at"] = int(r["positions"] * 1.5)
                 log(f"round {rnd}: no epoch beat the champion on held-out games; next try at {r['next_try_at']:,} positions")
             elif cand:
-                name = queue_sprt(state, rnd, cand)
-                r["pending"] = {"name": name, "cand": cand, "positions": r["positions"]}
-                log(f"round {rnd}: queued SPRT {name}")
+                name, host = queue_sprt(state, rnd, cand)
+                r["pending"] = {"name": name, "cand": cand, "positions": r["positions"], "host": host,
+                                "queued": now().isoformat()}
+                log(f"round {rnd}: queued SPRT {name}" + (f" on {host}" if host else ""))
             else:
                 log(f"round {rnd}: training failed (see {RL}/train-r{rnd}.log)")
         save(state)
