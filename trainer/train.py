@@ -274,8 +274,10 @@ def load_nnue_into(net, path):
         ib, obk, _flags = struct.unpack("<III", b[12:24])
         file_map = np.frombuffer(b, dtype=np.uint8, count=64, offset=24).astype(np.int64)
         off = 24 + 64
-    # A wider run starts from k copies of every neuron with output weights / k:
-    # the same function (up to the small symmetry-breaking noise), more capacity.
+    # A wider run starts from copies of the file's neurons (run neuron j copies neuron
+    # j mod hidden, so 768 from 512 copies the first 256 once) with each output weight
+    # split among its copies: the same function (up to the small symmetry-breaking
+    # noise), more capacity.
     # More king buckets: each new bucket starts as the file's bucket for the same
     # king squares, which is exact when the new buckets subdivide the old ones.
     run_ib = LAYOUT["input_buckets"]
@@ -285,9 +287,11 @@ def load_nnue_into(net, path):
     for sq in range(64):
         if file_map[sq] != source_of[LAYOUT["map"][sq]]:
             sys.exit(f"{path}: this run's king buckets do not subdivide the file's")
-    if net.hidden % hidden or obk != LAYOUT["output_buckets"]:
+    if net.hidden < hidden or obk != LAYOUT["output_buckets"]:
         sys.exit(f"{path}: layout {hidden}/{ib}/{obk} does not match this run")
-    k = net.hidden // hidden
+    src = torch.arange(net.hidden) % hidden  # the file's neuron each run neuron starts as
+    copy = torch.div(torch.arange(net.hidden), hidden, rounding_mode="floor").float()  # which copy of it
+    copies = torch.bincount(src, minlength=hidden)[src].float()  # how many run neurons share that source
     def take(n, dtype):
         nonlocal off
         a = np.frombuffer(b, dtype=dtype, count=n, offset=off)
@@ -298,17 +302,17 @@ def load_nnue_into(net, path):
         ftb = take(hidden, "<i2") / QA
         ow = take(obk * 2 * hidden, "<i2").reshape(obk, 2, hidden)
         ftw = ftw.reshape(ib, 768, hidden)[torch.from_numpy(source_of)].reshape(run_ib * 768, hidden)
-        net.ft.weight.copy_(ftw.repeat(1, k))
-        net.ft_bias.copy_(ftb.repeat(k))
-        # Split each quantised output weight into k integers with the same sum
-        # (copy j gets floor(w/k), plus 1 for the first w mod k copies), so the
+        net.ft.weight.copy_(ftw[:, src])
+        net.ft_bias.copy_(ftb[src])
+        # Split each quantised output weight into its c copies' integers with the same
+        # sum (copy j gets floor(w/c), plus 1 for the first w mod c copies), so the
         # widened network exports to exactly the same evaluation.
-        q = torch.div(ow, k, rounding_mode="floor")
-        r = ow - q * k
-        parts = [q + (r > j).float() for j in range(k)]
-        net.out.weight.copy_((torch.cat(parts, dim=2) / QB).reshape(obk, 2 * net.hidden))
+        w = ow[:, :, src]
+        q = torch.div(w, copies, rounding_mode="floor")
+        r = w - q * copies
+        net.out.weight.copy_(((q + (r > copy).float()) / QB).reshape(obk, 2 * net.hidden))
         net.out.bias.copy_(take(obk, "<i4") / (QA * QB))
-        if k > 1:
+        if net.hidden > hidden:
             net.ft.weight[:, hidden:] += torch.randn_like(net.ft.weight[:, hidden:]) * 1e-4
         if net.factor is not None:
             net.factor.weight.zero_()
