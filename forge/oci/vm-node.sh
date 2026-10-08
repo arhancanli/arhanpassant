@@ -2,7 +2,9 @@
 # ArhanPassant fleet node: build the engine at $BRANCH, then generate
 # self-play data on every core and upload finished chunks to the bucket.
 # A file ~/HOLD stops new work (manual jobs such as SPRT/SPSA run instead).
-# A file ~/BOT_THREADS (a number) keeps that many cores free for the Lichess bot.
+# Self-play runs at idle priority (SCHED_IDLE): it only gets cycles nothing else
+# wants, so a Lichess bot on the same VM always has the CPU first and self-play
+# fills whatever the bot leaves idle (no cores are reserved).
 set -u
 source ~/.cargo/env
 BRANCH=${BRANCH:-engine/elo-20261006}
@@ -32,15 +34,13 @@ upload_loop() {
   done
 }
 upload_loop &
-RESERVED=$(cat ~/BOT_THREADS 2>/dev/null || echo 0)
 # Search per self-play move: 5,000 nodes gives 60% more positions than 8,000 for 5% noisier targets.
 NODES=$(cat ~/DATAGEN_NODES 2>/dev/null || echo 5000)
-THREADS=$(( $(nproc) - RESERVED ))
-[ "$THREADS" -lt 1 ] && THREADS=1
+THREADS=$(nproc)
 while true; do
   if [ -e ~/HOLD ]; then sleep 60; continue; fi
-  log "datagen $THREADS threads, $NODES nodes, with $REV"
-  ~/ap-$REV datagen --threads "$THREADS" --nodes "$NODES" --seed $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') \
+  log "datagen $THREADS threads at idle priority, $NODES nodes, with $REV"
+  chrt --idle 0 ~/ap-$REV datagen --threads "$THREADS" --nodes "$NODES" --seed $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') \
     --out ~/data/$REV --positions-per-file 250000 --hours 6 \
     --set corr_joint=1 --set corr_cont=128 >> ~/datagen.log 2>&1
 done
