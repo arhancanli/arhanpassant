@@ -14,6 +14,16 @@ cargo build --release -p arhanpassant 2>&1 | tail -1
 BENCH=$(./target/release/arhanpassant bench 2>&1 | tail -1 | awk '{print $1}')
 cp target/release/arhanpassant "$DATA/bin/ap-net-$VERSION"
 echo "bench $BENCH"
+# The Mac's self-play and gauntlets run a profile-guided build of the same code when it builds and searches
+# identically (same bench nodes); otherwise the plain build stays.
+PGO="$DATA/bin/pgo-$VERSION"
+if bash forge/pgo_build.sh "$PGO" > /dev/null 2>&1 && [ "$("$PGO" bench 2>&1 | tail -1 | awk '{print $1}')" = "$BENCH" ]; then
+  mv "$PGO" "$DATA/bin/ap-net-$VERSION"
+  echo "profile-guided build"
+else
+  rm -f "$PGO"
+  echo "profile-guided build failed; plain build kept"
+fi
 git add engine/nets/default.nnue
 git commit -q -m "Network $VERSION: $SUMMARY
 
