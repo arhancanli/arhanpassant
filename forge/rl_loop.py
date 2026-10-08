@@ -124,7 +124,7 @@ def spawn(cmd, logfile):
                          stderr=subprocess.STDOUT, start_new_session=True)
 
 
-def start_mac_datagen(binary, rnd):
+def start_mac_datagen(binary, rnd, nodes):
     # Any engine build's self-play, whatever the order of its arguments.
     sh(["pkill", "-f", "[a]p-net-[^ ]* datagen"])
     time.sleep(2)
@@ -132,7 +132,7 @@ def start_mac_datagen(binary, rnd):
     for d in dirs:
         os.makedirs(d, exist_ok=True)
     seed = int(time.time())
-    base = [binary, "datagen", "--nodes", "8000", "--positions-per-file", "1000000"]
+    base = [binary, "datagen", "--nodes", str(nodes), "--positions-per-file", "1000000"]
     spawn([*base, "--threads", str(MAC_THREADS), "--seed", str(seed), "--out", dirs[0]], f"{RL}/datagen-r{rnd}.log")
     spawn([*base, "--threads", str(MAC_SEEDED), "--seed", str(seed + 17), "--book", f"{DATA}/active/seeds.epd",
            "--random-plies", "2", "--out", dirs[1]], f"{RL}/datagen-r{rnd}-active.log")
@@ -153,8 +153,9 @@ def recipe(state):
     """Training settings and the fresh positions a round collects before training
     ("threshold"), overridable in state.json ("recipe"). A fine-tune of a
     converged network needs a low learning rate: at 1e-4 a fresh optimizer knocks
-    it off its optimum and no epoch beats the starting network (round 6, 10-07)."""
-    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 1, "threshold": THRESHOLD}
+    it off its optimum and no epoch beats the starting network (round 6, 10-07).
+    "nodes" is the self-play search per move on the Mac (the fleet reads ~/DATAGEN_NODES)."""
+    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 1, "threshold": THRESHOLD, "nodes": 8000}
     r.update(state.get("recipe", {}))
     return r
 
@@ -219,7 +220,7 @@ def promote(state, rnd, cand, res, trained):
     state["binary"] = f"{DATA}/bin/ap-net-{version}"
     state["since"] = now().strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
     nxt = rnd + 1
-    state["rounds"][str(nxt)] = {"mac_dirs": start_mac_datagen(state["binary"], nxt), "oci_files": [],
+    state["rounds"][str(nxt)] = {"mac_dirs": start_mac_datagen(state["binary"], nxt, recipe(state)["nodes"]), "oci_files": [],
                                  "tries": 0, "positions": 0, "started": state["since"]}
     state["round"] = nxt
     save(state)

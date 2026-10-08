@@ -33,12 +33,14 @@ upload_loop() {
 }
 upload_loop &
 RESERVED=$(cat ~/BOT_THREADS 2>/dev/null || echo 0)
+# Search per self-play move: 5,000 nodes gives 60% more positions than 8,000 for 5% noisier targets.
+NODES=$(cat ~/DATAGEN_NODES 2>/dev/null || echo 5000)
 THREADS=$(( $(nproc) - RESERVED ))
 [ "$THREADS" -lt 1 ] && THREADS=1
 while true; do
   if [ -e ~/HOLD ]; then sleep 60; continue; fi
-  log "datagen $THREADS threads with $REV"
-  ~/ap-$REV datagen --threads "$THREADS" --nodes 8000 --seed $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') \
+  log "datagen $THREADS threads, $NODES nodes, with $REV"
+  ~/ap-$REV datagen --threads "$THREADS" --nodes "$NODES" --seed $(od -An -N4 -tu4 /dev/urandom | tr -d ' ') \
     --out ~/data/$REV --positions-per-file 250000 --hours 6 \
     --set corr_joint=1 --set corr_cont=128 >> ~/datagen.log 2>&1
 done
