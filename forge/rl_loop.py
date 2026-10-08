@@ -197,7 +197,8 @@ def train(state, rnd):
 def queue_sprt(state, rnd, cand):
     """Queue the candidate's SPRT; returns (name, host), host None for the Mac.
 
-    With "test_host" in state.json the test runs on that fleet VM (forge/oci/vm-tests.sh, first in its queue), so the
+    With "test_host" in state.json the test runs on that fleet VM (forge/oci/vm-tests.sh, first in its queue, ahead of
+    any search test running there), so the
     Mac keeps all its cores for self-play: a test there at concurrency 14 cut the Mac's self-play to about a third for
     the hours it ran. Both sides use the VM's newest build, rebuilt from the branch at every promotion."""
     name = f"rl{rnd}-try{state['rounds'][str(rnd)]['tries']}"
@@ -219,6 +220,19 @@ def queue_mac_sprt(state, name, cand):
                 f'{DATA}/elo/sprt2.sh {name} $B $B 5+0.05 0 5 14\n')
 
 
+# A search test running on the test VM would hold the network test for hours (5,000-8,000 games): put that job back
+# in the queue, where it sorts after the network test and later reruns from the start, and stop its arena, so the
+# runner takes the network test next.
+PREEMPT = r"""running=$(awk '$2=="start" {s=$3} $2=="done" && $3==s {s=""} END {print s}' ~/tests.log)
+case "$running" in
+  ""|000-*) ;;
+  *) cp ~/done/"$running" ~/queue/"$running"
+     t=$(grep -o 'sprt [^ ]*' ~/done/"$running" | tail -1 | cut -d' ' -f2)
+     pkill -f "[a]rena .*/elo/$t/" || true
+     echo "preempted $running" ;;
+esac"""
+
+
 def queue_remote_sprt(host, name, cand, champion):
     dest = f"ubuntu@{host}"
     for cmd, kw in [(SSH + [dest, "mkdir -p ~/nets"], {}),
@@ -227,7 +241,8 @@ def queue_remote_sprt(host, name, cand, champion):
                      {"input": f"# RL loop network test, queued {now():%Y-%m-%dT%H:%M:%SZ}.\n"
                                f'MAXGAMES=8000 CAND_OPTS="opt.EvalFile=/home/ubuntu/nets/{os.path.basename(cand)}" '
                                f'BASE_OPTS="opt.EvalFile=/home/ubuntu/nets/{os.path.basename(champion)}" '
-                               f"sprt {name} 5+0.05 0 5\n"})]:
+                               f"sprt {name} 5+0.05 0 5\n"}),
+                    (SSH + [dest, PREEMPT], {})]:
         r = sh(cmd, timeout=300, **kw)
         if r.returncode != 0:
             raise RuntimeError(r.stderr.strip() or f"exit {r.returncode}")
