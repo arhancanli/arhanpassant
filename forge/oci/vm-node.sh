@@ -15,6 +15,9 @@ cd ~
 if [ ! -d src ]; then git clone --depth 50 -b "$BRANCH" https://github.com/arhancanli/arhanpassant.git src; fi
 cd src && git fetch --depth 50 origin "$BRANCH" && git checkout -q -B run "origin/$BRANCH"
 REV=$(git rev-parse --short HEAD)
+# x86-64 VMs build for their own CPU: AVX2 makes the network 2.3x faster than the baseline x86-64 build (1.22M vs
+# 0.53M nodes/s on an AMD E5, same search). ARM's baseline already includes NEON.
+if [ "$(uname -m)" = x86_64 ]; then export RUSTFLAGS="-C target-cpu=native"; fi
 cargo build --release -p arhanpassant -p arhanpassant-arena >> ~/build.log 2>&1 || { log "build failed at $REV"; sleep 600; exit 1; }
 cp target/release/arhanpassant ~/ap-$REV && cp target/release/arena ~/arena 2>/dev/null
 # With a file ~/PGO, use the profile-guided build of the same code when it builds and searches identically (same

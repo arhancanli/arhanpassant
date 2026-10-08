@@ -16,10 +16,11 @@ if [ -z "$PROFDATA" ]; then
 fi
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-RUSTFLAGS="-Cprofile-generate=$WORK/raw" CARGO_TARGET_DIR=target/pgo-gen cargo build -q --release -p arhanpassant
+FLAGS=${RUSTFLAGS:-}
+RUSTFLAGS="$FLAGS -Cprofile-generate=$WORK/raw" CARGO_TARGET_DIR=target/pgo-gen cargo build -q --release -p arhanpassant
 target/pgo-gen/release/arhanpassant bench 13 > /dev/null
 target/pgo-gen/release/arhanpassant datagen --threads 2 --nodes 5000 --seed 7 --out "$WORK/selfplay" --hours 0.005 \
   --set corr_joint=1 --set corr_cont=128 > /dev/null 2>&1
 "$PROFDATA" merge -o "$WORK/merged.profdata" "$WORK/raw"
-RUSTFLAGS="-Cprofile-use=$WORK/merged.profdata" CARGO_TARGET_DIR=target/pgo-use cargo build -q --release -p arhanpassant
+RUSTFLAGS="$FLAGS -Cprofile-use=$WORK/merged.profdata" CARGO_TARGET_DIR=target/pgo-use cargo build -q --release -p arhanpassant
 cp target/pgo-use/release/arhanpassant "$OUT"
