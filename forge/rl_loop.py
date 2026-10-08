@@ -248,10 +248,11 @@ def result(name, host=None):
     return None
 
 
-def promote(state, rnd, cand, res, trained):
+def promote(state, rnd, cand, res, trained, replay=1):
     version = f"0.13.0-rl{rnd}"
     # `trained` is the count when training started; the round keeps collecting while the SPRT runs.
-    prev = f" plus round {rnd - 1}'s" if str(rnd - 1) in state["rounds"] else ""
+    first = max(rnd - replay, min(int(k) for k in state["rounds"]))
+    prev = "" if first >= rnd else f" plus round {first}'s" if first == rnd - 1 else f" plus rounds {first}-{rnd - 1}"
     summary = (f"RL round {rnd}: fine-tuned on {trained:,} fresh self-play positions{prev}, "
                f"{res['elo']:+.1f} Elo (95% [{res['elo_lo']:.1f}, {res['elo_hi']:.1f}], {res['games']:,} games at 5+0.05)")
     r = sh(["bash", f"{REPO}/forge/promote_net.sh", cand, version, summary], cwd=REPO)
@@ -292,7 +293,8 @@ def main():
                                                   "games": res["games"], "positions": pending["positions"]})
                 r.pop("pending")
                 save(state)
-                if res["decision"] == "H1" and promote(state, rnd, pending["cand"], res, pending["positions"]):
+                if res["decision"] == "H1" and promote(state, rnd, pending["cand"], res, pending["positions"],
+                                                       pending.get("replay", 1)):
                     log(f"promoted round {rnd}; round {rnd + 1} started")
                     continue
                 r["next_try_at"] = int(r["positions"] * 1.5)
@@ -317,7 +319,7 @@ def main():
             elif cand:
                 name, host = queue_sprt(state, rnd, cand)
                 r["pending"] = {"name": name, "cand": cand, "positions": r["positions"], "host": host,
-                                "queued": now().isoformat()}
+                                "queued": now().isoformat(), "replay": rc["replay"]}
                 log(f"round {rnd}: queued SPRT {name}" + (f" on {host}" if host else ""))
             else:
                 log(f"round {rnd}: training failed (see {RL}/train-r{rnd}.log)")
