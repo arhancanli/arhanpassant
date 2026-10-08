@@ -86,15 +86,17 @@ class Dataset:
     Files can be far larger than memory: each epoch visits every block once in
     random order and shuffles records inside a buffer of many blocks. Every
     `val_every`-th block is held out for validation, so the split is the same
-    in every run and never mixes with training.
+    in every run and never mixes with training. With `val_files`, only blocks of
+    those files are held out (every `val_every`-th of them); all others train.
     """
 
-    def __init__(self, paths, val_every=100, max_positions=0, file_sizes=None):
+    def __init__(self, paths, val_every=100, max_positions=0, file_sizes=None, val_files=None):
         files = data_files(paths)
         if not files:
             sys.exit("no data files found")
         prepare_file_limit(len(files))
-        self.maps, blocks = [], []
+        eligible = None if val_files is None else {os.path.realpath(f) for f in data_files(val_files)}
+        self.maps, blocks, holds = [], [], []
         total = 0
         for f in files:
             n = frozen_record_count(os.path.getsize(f), file_sizes[f] if file_sizes is not None else None, REC)
@@ -106,11 +108,14 @@ class Dataset:
             fi = len(self.maps)
             self.maps.append(m)
             blocks += [(fi, s, min(BLOCK, n - s)) for s in range(0, n, BLOCK)]
+            holds.append(eligible is None or os.path.realpath(f) in eligible)
             total += n
             if max_positions and total >= max_positions:
                 break
-        self.val_blocks = [b for i, b in enumerate(blocks) if i % val_every == val_every - 1]
-        self.train_blocks = [b for i, b in enumerate(blocks) if i % val_every != val_every - 1]
+        candidates = [b for b in blocks if holds[b[0]]]
+        held = {b for i, b in enumerate(candidates) if i % val_every == val_every - 1}
+        self.val_blocks = [b for b in blocks if b in held]
+        self.train_blocks = [b for b in blocks if b not in held]
         self.n_train = sum(b[2] for b in self.train_blocks)
         self.n_val = sum(b[2] for b in self.val_blocks)
         print(f"{total:,} positions in {len(self.maps)} files (train {self.n_train:,}, val {self.n_val:,})", flush=True)
@@ -327,6 +332,9 @@ def main():
     ap.add_argument("--init-nnue", help="start from this engine network (dequantised)")
     ap.add_argument("--power", type=float, default=2.0, help="loss exponent |prediction - target|^power")
     ap.add_argument("--val-every", type=int, default=100, help="hold out every N-th block for validation")
+    ap.add_argument("--val-files", nargs="+", help="hold out blocks only from these files or directories, for example the "
+                    "fresh round when earlier rounds are replayed: the starting network has trained on those, so their "
+                    "blocks would favour it over every epoch")
     ap.add_argument("--max-positions", type=int, default=0)
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=1)
@@ -361,7 +369,7 @@ def main():
         with open(args.manifest) as manifest:
             file_sizes = json.load(manifest)
     data = Dataset(list(file_sizes) if file_sizes is not None else args.data,
-                   args.val_every, args.max_positions, file_sizes)
+                   args.val_every, args.max_positions, file_sizes, args.val_files)
     if data.n_train < args.batch or data.n_val < args.batch:
         sys.exit("not enough training and validation data for one batch")
     vdata = data

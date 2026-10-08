@@ -165,10 +165,11 @@ def recipe(state):
 
 def train(state, rnd):
     """Fine-tune the champion; returns the candidate, "same" when no epoch beat
-    the champion on held-out games (the trainer then keeps the champion), or None."""
+    the champion on held-out positions of this round (the trainer then keeps the champion), or None."""
     rc = recipe(state)
     cand = f"{DATA}/nets/rl{rnd}.nnue"
     files = round_files(state, rnd)
+    fresh = list(files)  # held-out blocks come only from these: the champion trained on the replayed rounds
     for back in range(1, rc["replay"] + 1):  # earlier rounds' data, if the recipe replays it
         if str(rnd - back) in state["rounds"]:
             files += round_files(state, rnd - back)
@@ -181,7 +182,8 @@ def train(state, rnd):
     cmd = [PY, f"{REPO}/trainer/train.py", "--data", *manifest.keys(), "--manifest", f"{RL}/r{rnd}-manifest.json",
            "--hidden", str(state.get("hidden", 512)), "--input-buckets", str(state.get("input_buckets", 8)),
            "--output-buckets", "8", "--epochs", str(rc["epochs"]), "--lr", str(rc["lr"]), "--warmup", str(rc["warmup"]),
-           "--factorize", "--init-nnue", state["champion"], "--out", cand, "--workers", "4", "--threads", "4"]
+           "--factorize", "--init-nnue", state["champion"], "--out", cand, "--workers", "4", "--threads", "4",
+           "--val-files", *[p for p in fresh if p in manifest]]
     with open(f"{RL}/train-r{rnd}.log", "w") as f:
         code = subprocess.run(["nice", "-n", "10", *cmd], stdout=f, stderr=subprocess.STDOUT).returncode
     if code != 0 or not os.path.exists(cand):
