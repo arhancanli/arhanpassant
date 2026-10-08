@@ -35,7 +35,6 @@ IPS = f"{HOME}/.oci/arhanpassant/ips.txt"
 SSH = ["ssh", "-i", f"{HOME}/.ssh/arhanpassant_oci", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]
 PY = f"{HOME}/arhanpassant/.venv/bin/python"
 THRESHOLD = int(os.environ.get("RL_THRESHOLD", 15_000_000))
-MAC_THREADS, MAC_SEEDED = 6, 2
 
 
 def now():
@@ -124,7 +123,7 @@ def spawn(cmd, logfile):
                          stderr=subprocess.STDOUT, start_new_session=True)
 
 
-def start_mac_datagen(binary, rnd, nodes):
+def start_mac_datagen(binary, rnd, rc):
     # Any engine build's self-play, whatever the order of its arguments.
     sh(["pkill", "-f", "[a]p-net-[^ ]* datagen"])
     time.sleep(2)
@@ -132,9 +131,9 @@ def start_mac_datagen(binary, rnd, nodes):
     for d in dirs:
         os.makedirs(d, exist_ok=True)
     seed = int(time.time())
-    base = [binary, "datagen", "--nodes", str(nodes), "--positions-per-file", "1000000"]
-    spawn([*base, "--threads", str(MAC_THREADS), "--seed", str(seed), "--out", dirs[0]], f"{RL}/datagen-r{rnd}.log")
-    spawn([*base, "--threads", str(MAC_SEEDED), "--seed", str(seed + 17), "--book", f"{DATA}/active/seeds.epd",
+    base = [binary, "datagen", "--nodes", str(rc["nodes"]), "--positions-per-file", "1000000"]
+    spawn([*base, "--threads", str(rc["mac_threads"]), "--seed", str(seed), "--out", dirs[0]], f"{RL}/datagen-r{rnd}.log")
+    spawn([*base, "--threads", str(rc["mac_seeded"]), "--seed", str(seed + 17), "--book", f"{DATA}/active/seeds.epd",
            "--random-plies", "2", "--out", dirs[1]], f"{RL}/datagen-r{rnd}-active.log")
     return dirs
 
@@ -154,8 +153,12 @@ def recipe(state):
     ("threshold"), overridable in state.json ("recipe"). A fine-tune of a
     converged network needs a low learning rate: at 1e-4 a fresh optimizer knocks
     it off its optimum and no epoch beats the starting network (round 6, 10-07).
-    "nodes" is the self-play search per move on the Mac (the fleet reads ~/DATAGEN_NODES)."""
-    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 1, "threshold": THRESHOLD, "nodes": 8000}
+    "nodes" is the self-play search per move on the Mac (the fleet reads ~/DATAGEN_NODES);
+    "mac_threads" and "mac_seeded" are its self-play threads from the start position and
+    from the active-learning seeds. They run at the lowest priority, so test matches
+    still get the cores they need; more threads only take up what the tests leave idle."""
+    r = {"lr": 3e-5, "epochs": 3, "warmup": 500, "replay": 1, "threshold": THRESHOLD, "nodes": 8000,
+         "mac_threads": 6, "mac_seeded": 2}
     r.update(state.get("recipe", {}))
     return r
 
@@ -220,7 +223,7 @@ def promote(state, rnd, cand, res, trained):
     state["binary"] = f"{DATA}/bin/ap-net-{version}"
     state["since"] = now().strftime("%Y-%m-%dT%H:%M:%S.000+00:00")
     nxt = rnd + 1
-    state["rounds"][str(nxt)] = {"mac_dirs": start_mac_datagen(state["binary"], nxt, recipe(state)["nodes"]), "oci_files": [],
+    state["rounds"][str(nxt)] = {"mac_dirs": start_mac_datagen(state["binary"], nxt, recipe(state)), "oci_files": [],
                                  "tries": 0, "positions": 0, "started": state["since"]}
     state["round"] = nxt
     save(state)
