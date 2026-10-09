@@ -291,6 +291,10 @@ def promote(state, rnd, cand, res, trained, replay=1):
     state["round"] = nxt
     save(state)
     restart_fleet()
+    # Rounds the next trainings no longer replay: compress them (the Mac's disk fills at ~2.5 GB a round).
+    old = [k for k in state["rounds"] if int(k) < nxt - recipe(state)["replay"] and positions(round_files(state, int(k)))]
+    if old:
+        spawn(["python3", f"{REPO}/forge/compress_rounds.py", *old], f"{RL}/compress.log")
     return True
 
 
