@@ -118,6 +118,12 @@ def round_files(state, rnd):
     return files + r.get("oci_files", [])
 
 
+def gauntlet_running():
+    """A gauntlet against other engines is playing on the Mac. Training and promotion builds wait for it:
+    under their load opponents with tight move overheads lose games on time (g2-rl8 lost 7, 10-08)."""
+    return sh(["pgrep", "-f", f"^{DATA}/bin/arena .*/elo/gauntlet/"]).returncode == 0
+
+
 def spawn(cmd, logfile):
     """Start a long-running job detached from this process (its own session, output to a log)."""
     with open(logfile, "a") as out:
@@ -290,6 +296,7 @@ def promote(state, rnd, cand, res, trained, replay=1):
 
 def main():
     os.makedirs(RL, exist_ok=True)
+    waiting = False
     while not os.path.exists(f"{RL}/STOP"):
         state = load()
         rnd = state["round"]
@@ -299,9 +306,13 @@ def main():
         except Exception as e:  # network trouble: count what is local
             log(f"bucket sync failed: {e}")
         r["positions"] = positions(round_files(state, rnd))
+        busy = gauntlet_running()
+        if busy and not waiting:
+            log("a gauntlet is playing on the Mac: training and promotion wait until it ends")
+        waiting = busy
         pending = r.get("pending")
         if pending:
-            res = result(pending["name"], pending.get("host"))
+            res = None if busy else result(pending["name"], pending.get("host"))
             if res:
                 log(f"round {rnd} {pending['name']}: {res['decision']} {res['elo']:+.1f} [{res['elo_lo']:.1f}, {res['elo_hi']:.1f}] {res['games']} games")
                 r.setdefault("tests", []).append({"name": pending["name"], "decision": res["decision"], "elo": res["elo"],
@@ -313,12 +324,12 @@ def main():
                     log(f"promoted round {rnd}; round {rnd + 1} started")
                     continue
                 r["next_try_at"] = int(r["positions"] * 1.5)
-            elif pending.get("host") and now() - parse_time(pending["queued"]) > dt.timedelta(hours=10):
+            elif not busy and pending.get("host") and now() - parse_time(pending["queued"]) > dt.timedelta(hours=10):
                 # The test VM went quiet (for example the cloud trial ended): run the test here instead.
                 log(f"round {rnd} {pending['name']}: no result from {pending['host']} after 10 h; testing on the Mac")
                 queue_mac_sprt(state, pending["name"], pending["cand"])
                 pending.update(host=None, queued=now().isoformat())
-        elif r["positions"] >= max(recipe(state)["threshold"], r.get("next_try_at", 0)):
+        elif not busy and r["positions"] >= max(recipe(state)["threshold"], r.get("next_try_at", 0)):
             r["tries"] += 1
             save(state)
             rc = recipe(state)
