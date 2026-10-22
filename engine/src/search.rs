@@ -29,6 +29,19 @@ pub const TB_WIN_IN_MAX: i32 = TB_WIN - MAX_PLY as i32;
 /// Soft time limit scale by how many iterations in a row the best move held.
 const STABILITY: [f64; 5] = [2.5, 1.2, 0.9, 0.8, 0.75];
 
+#[derive(Clone, Copy)]
+struct QChecks {
+    remaining: i32,
+    keep_sacrifices: bool,
+    enabled: bool,
+}
+
+impl QChecks {
+    fn new(remaining: i32, keep_sacrifices: bool) -> Self {
+        Self { remaining, keep_sacrifices, enabled: remaining > 0 || keep_sacrifices }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Limits {
     pub depth: Option<i32>,
@@ -853,7 +866,11 @@ impl Searcher {
 
     // ------------------------------------------------------------------ quiescence
 
-    fn qsearch<const PV: bool>(&mut self, pos: &Position, mut alpha: i32, beta: i32, ply: usize) -> i32 {
+    fn qsearch<const PV: bool>(&mut self, pos: &Position, alpha: i32, beta: i32, ply: usize) -> i32 {
+        self.qsearch_checks::<PV>(pos, alpha, beta, ply, QChecks::new(p::qs_checks(), p::qs_check_see() != 0))
+    }
+
+    fn qsearch_checks<const PV: bool>(&mut self, pos: &Position, mut alpha: i32, beta: i32, ply: usize, checks: QChecks) -> i32 {
         self.nodes += 1;
         if PV {
             self.pv_len[ply] = ply;
@@ -874,8 +891,11 @@ impl Searcher {
 
         let tt_hit = self.shared.tt.probe(pos.hash());
         let tt_score = tt_hit.map_or(-INF, |e| score_from_tt(e.score, ply));
+        let qdepth = if checks.enabled { checks.remaining - 3 } else { 0 };
+        let usable = |e: TtEntry| !checks.enabled || (e.depth != 0 && e.depth >= qdepth);
         if let Some(e) = tt_hit {
             if !PV
+                && usable(e)
                 && (e.bound == BOUND_EXACT
                     || (e.bound == BOUND_LOWER && tt_score >= beta)
                     || (e.bound == BOUND_UPPER && tt_score <= alpha))
@@ -899,7 +919,7 @@ impl Searcher {
             static_eval = self.corrected(pos, raw_eval, ply);
             best_score = static_eval;
             if let Some(e) = tt_hit {
-                if tt_score.abs() < TB_WIN_IN_MAX
+                if usable(e) && tt_score.abs() < TB_WIN_IN_MAX
                     && ((e.bound == BOUND_LOWER && tt_score > best_score) || (e.bound == BOUND_UPPER && tt_score < best_score))
                 {
                     best_score = tt_score;
@@ -913,7 +933,7 @@ impl Searcher {
 
         let (c1, c2) = self.cont_keys(ply);
         let tt_move = tt_hit.map_or(Move::NULL, |e| e.mv);
-        let mut picker = MovePicker::qsearch(pos, tt_move, c1, c2);
+        let mut picker = MovePicker::qsearch_with_checks(pos, tt_move, c1, c2, checks.remaining > 0);
         let mut best_move = Move::NULL;
         let mut moves_searched = 0;
         let fut_base = if in_check || p::qs_fut_margin() == 0 { -INF } else { static_eval + p::qs_fut_margin() };
@@ -930,7 +950,8 @@ impl Searcher {
                     continue;
                 }
             }
-            if !in_check && best_score > -TB_WIN_IN_MAX && !see_ge(pos, m, p::qs_see()) {
+            if !in_check && best_score > -TB_WIN_IN_MAX && !see_ge(pos, m, p::qs_see())
+                && !(checks.keep_sacrifices && pos.gives_check(m)) {
                 continue;
             }
             let child = pos.after(m);
@@ -940,7 +961,12 @@ impl Searcher {
             if PV {
                 self.pv_len[ply + 1] = ply + 1;
             }
-            let score = -self.qsearch::<PV>(&child, -beta, -alpha, ply + 1);
+            let next = if checks.enabled && !in_check && m.is_quiet() {
+                QChecks { remaining: checks.remaining - 1, ..checks }
+            } else {
+                checks
+            };
+            let score = -self.qsearch_checks::<PV>(&child, -beta, -alpha, ply + 1, next);
             self.pop_move();
             moves_searched += 1;
             if self.stopped {
@@ -964,7 +990,7 @@ impl Searcher {
             return -MATE + ply as i32;
         }
         let bound = if best_score >= beta { BOUND_LOWER } else { BOUND_UPPER };
-        self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, 0, bound, false);
+        self.shared.tt.store(pos.hash(), best_move, score_to_tt(best_score, ply), raw_eval, qdepth, bound, false);
         best_score
     }
 
@@ -1262,6 +1288,42 @@ pub(crate) fn search_threads_prepared(
         });
     }
     result
+}
+
+#[cfg(test)]
+mod qchecking_tests {
+    use super::*;
+
+    const QUIET_MATE: &str = "7k/5Q2/6K1/8/8/8/8/8 w - - 0 1";
+
+    fn searcher(pos: &Position) -> Searcher {
+        let mut s = Searcher::new(Shared::new(1, None));
+        s.hashes.push(pos.hash());
+        s.verbose = false;
+        s
+    }
+
+    #[test]
+    fn quiescence_can_find_a_quiet_mate_when_checks_are_enabled() {
+        let pos = Position::from_fen(QUIET_MATE).unwrap();
+        let without = searcher(&pos).qsearch_checks::<true>(&pos, -INF, INF, 0, QChecks::new(0, false));
+        assert!(without.abs() < MATE_IN_MAX);
+        let mut s = searcher(&pos);
+        let with = s.qsearch_checks::<true>(&pos, -INF, INF, 0, QChecks::new(1, false));
+        assert_eq!(with, MATE - 1);
+        let child = pos.after(s.pv[0][0]);
+        assert!(child.in_check() && child.legal_moves().is_empty());
+    }
+
+    #[test]
+    fn capture_only_cached_scores_cannot_hide_a_quiet_mate() {
+        let pos = Position::from_fen(QUIET_MATE).unwrap();
+        for cached_depth in [0, -3] {
+            let mut s = searcher(&pos);
+            s.shared.tt.store(pos.hash(), Move::NULL, 12345, 0, cached_depth, BOUND_EXACT, false);
+            assert_eq!(s.qsearch_checks::<false>(&pos, -INF, INF, 0, QChecks::new(1, false)), MATE - 1);
+        }
+    }
 }
 
 #[cfg(test)]

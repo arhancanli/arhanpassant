@@ -37,6 +37,8 @@ pub struct MovePicker {
     skip_quiets: bool,
     /// Quiescence: only noisy moves (unless in check), no good/bad split.
     qsearch: bool,
+    /// Outside check, an extended quiescence picker includes only checking quiets.
+    checks_only: bool,
 }
 
 impl MovePicker {
@@ -59,15 +61,22 @@ impl MovePicker {
             bad_idx: 0,
             skip_quiets: false,
             qsearch: false,
+            checks_only: false,
         }
     }
 
     pub fn qsearch(pos: &Position, tt_move: Move, c1: ContKey, c2: ContKey) -> MovePicker {
+        Self::qsearch_with_checks(pos, tt_move, c1, c2, false)
+    }
+
+    pub fn qsearch_with_checks(pos: &Position, tt_move: Move, c1: ContKey, c2: ContKey, quiet_checks: bool) -> MovePicker {
         let in_check = pos.in_check();
-        let usable = !tt_move.is_null() && (in_check || tt_move.is_noisy());
+        let usable = !tt_move.is_null() && (in_check || tt_move.is_noisy()
+            || (quiet_checks && pos.is_legal(tt_move) && pos.gives_check(tt_move)));
         let mut mp = MovePicker::new(pos, if usable { tt_move } else { Move::NULL }, [Move::NULL; 2], Move::NULL, c1, c2);
         mp.qsearch = true;
-        mp.skip_quiets = !in_check;
+        mp.skip_quiets = !in_check && !quiet_checks;
+        mp.checks_only = !in_check && quiet_checks;
         mp
     }
 
@@ -145,6 +154,9 @@ impl MovePicker {
                         if m == self.tt_move {
                             continue;
                         }
+                        if self.checks_only && !pos.gives_check(m) {
+                            continue;
+                        }
                         let piece = pos.moved_piece(m);
                         let mut score = hist.quiet_score(stm, piece, m, self.c1, self.c2, self.c4);
                         if m == self.killers[0] {
@@ -177,6 +189,46 @@ impl MovePicker {
                 }
                 Stage::Done => return None,
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod checking_tests {
+    use super::*;
+
+    fn collect(pos: &Position, tt: Move, checks: bool) -> Vec<Move> {
+        let mut picker = MovePicker::qsearch_with_checks(pos, tt, ContKey::NONE, ContKey::NONE, checks);
+        let history = History::new();
+        let mut moves = Vec::new();
+        while let Some(m) = picker.next(pos, &history) {
+            assert!(pos.is_legal(m));
+            assert!(!moves.contains(&m));
+            moves.push(m);
+        }
+        moves
+    }
+
+    #[test]
+    fn quiet_mating_checks_are_available_but_ordinary_quiets_are_not() {
+        let pos = Position::from_fen("7k/5Q2/6K1/8/8/8/8/8 w - - 0 1").unwrap();
+        assert!(collect(&pos, Move::NULL, false).is_empty());
+        let moves = collect(&pos, Move::NULL, true);
+        assert!(moves.contains(&pos.parse_uci_move("f7h7").unwrap()));
+        assert!(!moves.contains(&pos.parse_uci_move("f7e6").unwrap()));
+        let tt = pos.parse_uci_move("f7h7").unwrap();
+        assert_eq!(collect(&pos, tt, true).first(), Some(&tt));
+        let stale = Position::startpos().parse_uci_move("e2e4").unwrap();
+        assert_eq!(collect(&pos, stale, true), moves);
+    }
+
+    #[test]
+    fn check_evasions_survive_even_when_no_quiet_checks_remain() {
+        let pos = Position::from_fen("4k3/8/8/8/8/8/8/4R1K1 b - - 0 1").unwrap();
+        for checks in [false, true] {
+            let mut moves: Vec<_> = collect(&pos, Move::NULL, checks).iter().map(|m| m.to_uci()).collect();
+            moves.sort();
+            assert_eq!(moves, ["e8d7", "e8d8", "e8f7", "e8f8"]);
         }
     }
 }

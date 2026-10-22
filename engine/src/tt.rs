@@ -35,13 +35,15 @@ pub struct TranspositionTable {
     age: AtomicU8,
 }
 
-// data layout: move 16 | score 16 | eval 16 | depth 8 | bound 2 | pv 1 | age 5
+// data layout: move 16 | score 16 | eval 16 | signed depth 8 | bound 2 | pv 1 | age 5
+// Full search uses nonnegative depths; negative depths distinguish quiescence
+// checking budgets without making a quiescence result a full-search cutoff.
 #[inline(always)]
 fn pack(mv: Move, score: i32, eval: i32, depth: i32, bound: u8, pv: bool, age: u8) -> u64 {
     (mv.0 as u64)
         | ((score as i16 as u16 as u64) << 16)
         | ((eval as i16 as u16 as u64) << 32)
-        | ((depth.clamp(0, 255) as u64) << 48)
+        | ((depth.clamp(-128, 127) as i8 as u8 as u64) << 48)
         | ((bound as u64 & 3) << 56)
         | ((pv as u64) << 58)
         | (((age & 31) as u64) << 59)
@@ -54,7 +56,7 @@ fn unpack(d: u64) -> (TtEntry, u8) {
             mv: Move(d as u16),
             score: (d >> 16) as u16 as i16 as i32,
             eval: (d >> 32) as u16 as i16 as i32,
-            depth: ((d >> 48) & 0xFF) as i32,
+            depth: (d >> 48) as u8 as i8 as i32,
             bound: ((d >> 56) & 3) as u8,
             pv: (d >> 58) & 1 != 0,
         },
@@ -169,5 +171,17 @@ mod tests {
         let e = tt.probe(0xDEAD_BEEF_1234_5678).unwrap();
         assert_eq!((e.mv, e.score, e.eval, e.depth, e.bound, e.pv), (m, -31_000, 57, 17, BOUND_LOWER, true));
         assert!(tt.probe(0xDEAD_BEEF_1234_5679).is_none());
+    }
+
+    #[test]
+    fn quiescence_depths_remain_negative_and_preserve_other_fields() {
+        for depth in [-128, -3, -2, -1, 0, 1, 126, 127] {
+            let tt = TranspositionTable::new(1);
+            let m = Move::new(12, 28, 1);
+            tt.store(0xDEAD_BEEF_1234_5678, m, -31_000, 57, depth, BOUND_LOWER, true);
+            let e = tt.probe(0xDEAD_BEEF_1234_5678).unwrap();
+            assert_eq!((e.mv, e.score, e.eval, e.depth, e.bound, e.pv),
+                       (m, -31_000, 57, depth, BOUND_LOWER, true));
+        }
     }
 }

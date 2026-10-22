@@ -85,4 +85,6 @@ tunables! {
     cont4: 0, 0, 1;               // continuation history also keyed by our own move two turns ago
     corr_joint: 0, 0, 1;          // correction tables learn jointly (each toward what the others leave), not each the whole error
     smp_vote: 0, 0, 1;            // experimental: choose a move using completed searches from every worker
+    qs_checks: 0, 0, 2;           // experimental: quiet checks allowed per quiescence line
+    qs_check_see: 0, 0, 1;        // experimental: retain checking moves that lose a static exchange
 }
