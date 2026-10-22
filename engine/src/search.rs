@@ -864,7 +864,10 @@ impl Searcher {
         if self.check_stop() {
             return 0;
         }
-        if pos.is_insufficient_material() || (ply > 0 && self.is_repetition(pos, ply)) {
+        // Frontier nodes obey the same draw rules as the full search. The
+        // shared check preserves checkmate's precedence at the rule-50 boundary.
+        let draw = if ply > 0 { self.is_draw(pos, ply) } else { pos.is_insufficient_material() };
+        if draw {
             return DRAW;
         }
         let in_check = pos.in_check();
@@ -1262,6 +1265,70 @@ pub(crate) fn search_threads_prepared(
         });
     }
     result
+}
+
+#[cfg(test)]
+mod draw_tests {
+    use super::*;
+
+    fn score<const PV: bool>(fen: &str, cached_score: Option<i32>) -> i32 {
+        let pos = Position::from_fen(fen).unwrap();
+        let shared = Shared::new(1, None);
+        if let Some(value) = cached_score {
+            shared.tt.store(pos.hash(), Move::NULL, value, value, 10, BOUND_EXACT, false);
+        }
+        let mut searcher = Searcher::new(shared);
+        searcher.hashes.push(pos.hash());
+        searcher.qsearch::<PV>(&pos, -INF, INF, 1)
+    }
+
+    #[test]
+    fn quiescence_observes_the_fifty_move_boundary() {
+        for clock in [100, 101, 149, 150] {
+            let fen = format!("4k3/8/8/8/8/8/8/R3K3 w - - {clock} 80");
+            assert_eq!(score::<true>(&fen, None), DRAW, "PV at {clock}");
+            assert_eq!(score::<false>(&fen, None), DRAW, "non-PV at {clock}");
+        }
+        assert!(score::<true>("4k3/8/8/8/8/8/8/R3K3 w - - 99 80", None) > DRAW);
+    }
+
+    #[test]
+    fn quiescence_draw_precedes_a_cached_position_score() {
+        let fen = "4k3/8/8/8/8/8/8/R3K3 w - - 100 80";
+        assert_eq!(score::<false>(fen, Some(1200)), DRAW);
+        assert_eq!(score::<true>(fen, Some(-1200)), DRAW);
+    }
+
+    #[test]
+    fn check_with_an_evasion_is_still_a_fifty_move_draw() {
+        let fen = "4k3/8/8/8/8/8/8/K3R3 b - - 100 80";
+        let pos = Position::from_fen(fen).unwrap();
+        assert!(pos.in_check() && !pos.legal_moves().is_empty());
+        assert_eq!(score::<true>(fen, None), DRAW);
+        assert_eq!(score::<false>(fen, None), DRAW);
+    }
+
+    #[test]
+    fn checkmate_takes_precedence_over_the_fifty_move_counter() {
+        let fen = "7k/6Q1/5K2/8/8/8/8/8 b - - 100 80";
+        let pos = Position::from_fen(fen).unwrap();
+        assert!(pos.in_check() && pos.legal_moves().is_empty());
+        assert_eq!(score::<true>(fen, None), -MATE + 1);
+        assert_eq!(score::<false>(fen, None), -MATE + 1);
+    }
+
+    #[test]
+    fn irreversible_moves_reset_the_boundary_before_quiescence() {
+        for (fen, uci) in [
+            ("4k3/8/8/8/8/8/P7/R3K3 w - - 99 80", "a2a3"),
+            ("4k3/8/8/8/8/8/p7/R3K3 w - - 99 80", "a1a2"),
+        ] {
+            let pos = Position::from_fen(fen).unwrap();
+            let child = pos.after(pos.parse_uci_move(uci).unwrap());
+            assert_eq!(child.halfmove_clock(), 0);
+            assert!(score::<true>(&child.fen(), None) < DRAW);
+        }
+    }
 }
 
 #[cfg(test)]
