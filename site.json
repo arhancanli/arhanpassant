@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-21T00:20:13Z",
+ "updated": "2026-10-23T00:20:34Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -783,58 +783,6 @@
  },
  "lichess": [
   {
-   "date": "2026-10-02",
-   "games": 15,
-   "positions": 953,
-   "bySpeed": {
-    "blitz": {
-     "games": 10,
-     "won": 4,
-     "drawn": 0,
-     "lost": 6,
-     "vsBots": 10,
-     "vsPeople": 0,
-     "ratingChange": -473
-    },
-    "classical": {
-     "games": 1,
-     "won": 0,
-     "drawn": 1,
-     "lost": 0,
-     "vsBots": 1,
-     "vsPeople": 0,
-     "ratingChange": -241
-    },
-    "bullet": {
-     "games": 2,
-     "won": 0,
-     "drawn": 0,
-     "lost": 2,
-     "vsBots": 2,
-     "vsPeople": 0,
-     "ratingChange": -748
-    },
-    "rapid": {
-     "games": 1,
-     "won": 0,
-     "drawn": 0,
-     "lost": 1,
-     "vsBots": 1,
-     "vsPeople": 0,
-     "ratingChange": -253
-    },
-    "correspondence": {
-     "games": 1,
-     "won": 1,
-     "drawn": 0,
-     "lost": 0,
-     "vsBots": 1,
-     "vsPeople": 0,
-     "ratingChange": 329
-    }
-   }
-  },
-  {
    "date": "2026-10-03",
    "games": 53,
    "positions": 4207,
@@ -1409,6 +1357,110 @@
      "vsBots": 9,
      "vsPeople": 0,
      "ratingChange": -19
+    }
+   }
+  },
+  {
+   "date": "2026-10-21",
+   "games": 103,
+   "positions": 7326,
+   "bySpeed": {
+    "classical": {
+     "games": 14,
+     "won": 11,
+     "drawn": 1,
+     "lost": 2,
+     "vsBots": 14,
+     "vsPeople": 0,
+     "ratingChange": 1
+    },
+    "correspondence": {
+     "games": 10,
+     "won": 9,
+     "drawn": 1,
+     "lost": 0,
+     "vsBots": 10,
+     "vsPeople": 0,
+     "ratingChange": 11
+    },
+    "bullet": {
+     "games": 33,
+     "won": 16,
+     "drawn": 10,
+     "lost": 7,
+     "vsBots": 33,
+     "vsPeople": 0,
+     "ratingChange": 9
+    },
+    "blitz": {
+     "games": 38,
+     "won": 20,
+     "drawn": 7,
+     "lost": 11,
+     "vsBots": 38,
+     "vsPeople": 0,
+     "ratingChange": -29
+    },
+    "rapid": {
+     "games": 8,
+     "won": 6,
+     "drawn": 1,
+     "lost": 1,
+     "vsBots": 8,
+     "vsPeople": 0,
+     "ratingChange": 4
+    }
+   }
+  },
+  {
+   "date": "2026-10-22",
+   "games": 84,
+   "positions": 6348,
+   "bySpeed": {
+    "bullet": {
+     "games": 27,
+     "won": 21,
+     "drawn": 2,
+     "lost": 4,
+     "vsBots": 27,
+     "vsPeople": 0,
+     "ratingChange": -2
+    },
+    "rapid": {
+     "games": 7,
+     "won": 5,
+     "drawn": 2,
+     "lost": 0,
+     "vsBots": 7,
+     "vsPeople": 0,
+     "ratingChange": 12
+    },
+    "classical": {
+     "games": 14,
+     "won": 10,
+     "drawn": 3,
+     "lost": 1,
+     "vsBots": 14,
+     "vsPeople": 0,
+     "ratingChange": -7
+    },
+    "blitz": {
+     "games": 30,
+     "won": 18,
+     "drawn": 8,
+     "lost": 4,
+     "vsBots": 30,
+     "vsPeople": 0,
+     "ratingChange": 6
+    },
+    "correspondence": {
+     "games": 6,
+     "won": 5,
+     "drawn": 1,
+     "lost": 0,
+     "vsBots": 6,
+     "vsPeople": 0,
+     "ratingChange": 6
     }
    }
   }
