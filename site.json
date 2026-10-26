@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-25T00:22:58Z",
+ "updated": "2026-10-26T00:25:31Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -783,12 +783,6 @@
  },
  "lichess": [
   {
-   "date": "2026-10-06",
-   "games": 0,
-   "positions": 0,
-   "bySpeed": {}
-  },
-  {
    "date": "2026-10-07",
    "games": 62,
    "positions": 4192,
@@ -1461,6 +1455,58 @@
      "vsBots": 18,
      "vsPeople": 0,
      "ratingChange": -7
+    }
+   }
+  },
+  {
+   "date": "2026-10-25",
+   "games": 162,
+   "positions": 12372,
+   "bySpeed": {
+    "classical": {
+     "games": 18,
+     "won": 15,
+     "drawn": 2,
+     "lost": 1,
+     "vsBots": 18,
+     "vsPeople": 0,
+     "ratingChange": 13
+    },
+    "bullet": {
+     "games": 44,
+     "won": 24,
+     "drawn": 8,
+     "lost": 12,
+     "vsBots": 44,
+     "vsPeople": 0,
+     "ratingChange": -3
+    },
+    "blitz": {
+     "games": 66,
+     "won": 38,
+     "drawn": 14,
+     "lost": 14,
+     "vsBots": 66,
+     "vsPeople": 0,
+     "ratingChange": -30
+    },
+    "correspondence": {
+     "games": 11,
+     "won": 7,
+     "drawn": 2,
+     "lost": 2,
+     "vsBots": 11,
+     "vsPeople": 0,
+     "ratingChange": -7
+    },
+    "rapid": {
+     "games": 23,
+     "won": 16,
+     "drawn": 4,
+     "lost": 3,
+     "vsBots": 23,
+     "vsPeople": 0,
+     "ratingChange": 9
     }
    }
   }
