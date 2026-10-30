@@ -2,10 +2,13 @@
  "game": 1,
  "moves": [
   "e2e4",
-  "c7c5"
+  "c7c5",
+  "d1e2",
+  "b8c6"
  ],
  "players": [
-  "arhancanli"
+  "arhancanli",
+  "mehmetihsancanli"
  ],
  "record": {
   "engine": 0,
@@ -13,16 +16,17 @@
   "draw": 0
  },
  "movers": {
-  "arhancanli": 1
+  "arhancanli": 1,
+  "mehmetihsancanli": 1
  },
  "games": [],
  "last": {
   "game": 1,
-  "by": "arhancanli",
-  "move": "e4",
-  "reply": "1... c5",
-  "view": "it rates the position +0.23 for White",
-  "issue": 1,
-  "at": "2026-10-02T11:42:47Z"
+  "by": "mehmetihsancanli",
+  "move": "Qe2",
+  "reply": "2... Nc6",
+  "view": "it rates the position -0.51 for White",
+  "issue": 15,
+  "at": "2026-10-30T05:56:41Z"
  }
 }
