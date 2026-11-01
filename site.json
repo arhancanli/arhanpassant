@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-31T00:20:44Z",
+ "updated": "2026-11-01T00:20:39Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -783,58 +783,6 @@
  },
  "lichess": [
   {
-   "date": "2026-10-16",
-   "games": 95,
-   "positions": 6824,
-   "bySpeed": {
-    "classical": {
-     "games": 17,
-     "won": 12,
-     "drawn": 1,
-     "lost": 4,
-     "vsBots": 17,
-     "vsPeople": 0,
-     "ratingChange": -32
-    },
-    "blitz": {
-     "games": 35,
-     "won": 26,
-     "drawn": 3,
-     "lost": 6,
-     "vsBots": 35,
-     "vsPeople": 0,
-     "ratingChange": 6
-    },
-    "correspondence": {
-     "games": 3,
-     "won": 2,
-     "drawn": 1,
-     "lost": 0,
-     "vsBots": 3,
-     "vsPeople": 0,
-     "ratingChange": 5
-    },
-    "bullet": {
-     "games": 32,
-     "won": 22,
-     "drawn": 2,
-     "lost": 8,
-     "vsBots": 32,
-     "vsPeople": 0,
-     "ratingChange": 1
-    },
-    "rapid": {
-     "games": 8,
-     "won": 5,
-     "drawn": 2,
-     "lost": 1,
-     "vsBots": 8,
-     "vsPeople": 0,
-     "ratingChange": -9
-    }
-   }
-  },
-  {
    "date": "2026-10-17",
    "games": 94,
    "positions": 6132,
@@ -1507,6 +1455,58 @@
      "vsBots": 8,
      "vsPeople": 0,
      "ratingChange": 2
+    }
+   }
+  },
+  {
+   "date": "2026-10-31",
+   "games": 92,
+   "positions": 6773,
+   "bySpeed": {
+    "blitz": {
+     "games": 40,
+     "won": 26,
+     "drawn": 2,
+     "lost": 12,
+     "vsBots": 40,
+     "vsPeople": 0,
+     "ratingChange": -19
+    },
+    "bullet": {
+     "games": 26,
+     "won": 18,
+     "drawn": 5,
+     "lost": 3,
+     "vsBots": 26,
+     "vsPeople": 0,
+     "ratingChange": 4
+    },
+    "rapid": {
+     "games": 9,
+     "won": 8,
+     "drawn": 0,
+     "lost": 1,
+     "vsBots": 9,
+     "vsPeople": 0,
+     "ratingChange": -3
+    },
+    "classical": {
+     "games": 12,
+     "won": 5,
+     "drawn": 0,
+     "lost": 7,
+     "vsBots": 12,
+     "vsPeople": 0,
+     "ratingChange": -59
+    },
+    "correspondence": {
+     "games": 5,
+     "won": 2,
+     "drawn": 2,
+     "lost": 1,
+     "vsBots": 5,
+     "vsPeople": 0,
+     "ratingChange": -5
     }
    }
   }
