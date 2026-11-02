@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-01T00:20:39Z",
+ "updated": "2026-11-02T00:22:38Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -783,58 +783,6 @@
  },
  "lichess": [
   {
-   "date": "2026-10-17",
-   "games": 94,
-   "positions": 6132,
-   "bySpeed": {
-    "rapid": {
-     "games": 14,
-     "won": 12,
-     "drawn": 1,
-     "lost": 1,
-     "vsBots": 14,
-     "vsPeople": 0,
-     "ratingChange": 8
-    },
-    "classical": {
-     "games": 15,
-     "won": 13,
-     "drawn": 2,
-     "lost": 0,
-     "vsBots": 15,
-     "vsPeople": 0,
-     "ratingChange": 15
-    },
-    "correspondence": {
-     "games": 6,
-     "won": 4,
-     "drawn": 1,
-     "lost": 1,
-     "vsBots": 6,
-     "vsPeople": 0,
-     "ratingChange": 2
-    },
-    "bullet": {
-     "games": 25,
-     "won": 20,
-     "drawn": 0,
-     "lost": 5,
-     "vsBots": 25,
-     "vsPeople": 0,
-     "ratingChange": -16
-    },
-    "blitz": {
-     "games": 34,
-     "won": 21,
-     "drawn": 9,
-     "lost": 4,
-     "vsBots": 34,
-     "vsPeople": 0,
-     "ratingChange": 7
-    }
-   }
-  },
-  {
    "date": "2026-10-18",
    "games": 97,
    "positions": 6912,
@@ -1505,6 +1453,58 @@
      "drawn": 2,
      "lost": 1,
      "vsBots": 5,
+     "vsPeople": 0,
+     "ratingChange": -5
+    }
+   }
+  },
+  {
+   "date": "2026-11-01",
+   "games": 80,
+   "positions": 6086,
+   "bySpeed": {
+    "blitz": {
+     "games": 25,
+     "won": 13,
+     "drawn": 6,
+     "lost": 6,
+     "vsBots": 25,
+     "vsPeople": 0,
+     "ratingChange": -6
+    },
+    "classical": {
+     "games": 16,
+     "won": 13,
+     "drawn": 1,
+     "lost": 2,
+     "vsBots": 16,
+     "vsPeople": 0,
+     "ratingChange": 11
+    },
+    "bullet": {
+     "games": 26,
+     "won": 17,
+     "drawn": 4,
+     "lost": 5,
+     "vsBots": 26,
+     "vsPeople": 0,
+     "ratingChange": -1
+    },
+    "rapid": {
+     "games": 7,
+     "won": 6,
+     "drawn": 1,
+     "lost": 0,
+     "vsBots": 7,
+     "vsPeople": 0,
+     "ratingChange": 2
+    },
+    "correspondence": {
+     "games": 6,
+     "won": 4,
+     "drawn": 0,
+     "lost": 2,
+     "vsBots": 6,
      "vsPeople": 0,
      "ratingChange": -5
     }
