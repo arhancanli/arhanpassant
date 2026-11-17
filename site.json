@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-15T00:20:01Z",
+ "updated": "2026-11-17T00:20:03Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -783,58 +783,6 @@
  },
  "lichess": [
   {
-   "date": "2026-11-01",
-   "games": 80,
-   "positions": 6086,
-   "bySpeed": {
-    "blitz": {
-     "games": 25,
-     "won": 13,
-     "drawn": 6,
-     "lost": 6,
-     "vsBots": 25,
-     "vsPeople": 0,
-     "ratingChange": -6
-    },
-    "classical": {
-     "games": 16,
-     "won": 13,
-     "drawn": 1,
-     "lost": 2,
-     "vsBots": 16,
-     "vsPeople": 0,
-     "ratingChange": 11
-    },
-    "bullet": {
-     "games": 26,
-     "won": 17,
-     "drawn": 4,
-     "lost": 5,
-     "vsBots": 26,
-     "vsPeople": 0,
-     "ratingChange": -1
-    },
-    "rapid": {
-     "games": 7,
-     "won": 6,
-     "drawn": 1,
-     "lost": 0,
-     "vsBots": 7,
-     "vsPeople": 0,
-     "ratingChange": 2
-    },
-    "correspondence": {
-     "games": 6,
-     "won": 4,
-     "drawn": 0,
-     "lost": 2,
-     "vsBots": 6,
-     "vsPeople": 0,
-     "ratingChange": -5
-    }
-   }
-  },
-  {
    "date": "2026-11-02",
    "games": 15,
    "positions": 1109,
@@ -945,6 +893,12 @@
   },
   {
    "date": "2026-11-14",
+   "games": 0,
+   "positions": 0,
+   "bySpeed": {}
+  },
+  {
+   "date": "2026-11-16",
    "games": 0,
    "positions": 0,
    "bySpeed": {}
