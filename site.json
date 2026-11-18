@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-17T00:20:03Z",
+ "updated": "2026-11-18T00:20:07Z",
  "champion": "0.12.0",
  "ledger": [
   {
@@ -783,49 +783,6 @@
  },
  "lichess": [
   {
-   "date": "2026-11-02",
-   "games": 15,
-   "positions": 1109,
-   "bySpeed": {
-    "bullet": {
-     "games": 5,
-     "won": 5,
-     "drawn": 0,
-     "lost": 0,
-     "vsBots": 5,
-     "vsPeople": 0,
-     "ratingChange": 1
-    },
-    "rapid": {
-     "games": 4,
-     "won": 3,
-     "drawn": 1,
-     "lost": 0,
-     "vsBots": 4,
-     "vsPeople": 0,
-     "ratingChange": 0
-    },
-    "blitz": {
-     "games": 5,
-     "won": 4,
-     "drawn": 1,
-     "lost": 0,
-     "vsBots": 5,
-     "vsPeople": 0,
-     "ratingChange": 4
-    },
-    "classical": {
-     "games": 1,
-     "won": 1,
-     "drawn": 0,
-     "lost": 0,
-     "vsBots": 1,
-     "vsPeople": 0,
-     "ratingChange": 0
-    }
-   }
-  },
-  {
    "date": "2026-11-03",
    "games": 0,
    "positions": 0,
@@ -899,6 +856,12 @@
   },
   {
    "date": "2026-11-16",
+   "games": 0,
+   "positions": 0,
+   "bySpeed": {}
+  },
+  {
+   "date": "2026-11-17",
    "games": 0,
    "positions": 0,
    "bySpeed": {}
